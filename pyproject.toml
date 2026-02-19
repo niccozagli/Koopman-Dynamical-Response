@@ -1,0 +1,52 @@
+[project]
+name = "koopman-response"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Niccolo Zagli", email = "niccozagli@gmail.com" }]
+dependencies = [
+  "numpy>=2.2.0",
+  "scipy>=1.15.3,<2.0.0",
+  "matplotlib>=3.10.3,<4.0.0",
+  "tqdm>=4.67.1,<5.0.0",
+  "ipykernel>=6.29.5",
+  "statsmodels>=0.14.4",
+  "plotly>=6.0.1",
+  "joblib>=1.5.0",
+  "marimo",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "black",
+  "isort",
+  "mypy",
+  "pre-commit",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_unused_ignores = true
+show_error_codes = true
+strict_optional = true
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
