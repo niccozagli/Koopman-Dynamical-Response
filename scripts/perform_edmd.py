@@ -4,7 +4,7 @@ from koopman_response.algorithms.dictionaries import ChebyshevDictionary
 from koopman_response.algorithms.edmd import EDMD
 from koopman_response.systems.integrators import integrate_em
 from koopman_response.systems.lorenz63 import NoisyLorenz63
-from koopman_response.utils.preprocessing import normalise_data_chebyshev
+from koopman_response.utils.preprocessing import make_snapshots, normalise_data_chebyshev
 from koopman_response.utils.paths import get_data_folder_path
 
 ######### CHOOSE THE PARAMETERS FOR EDMD ##########
@@ -29,8 +29,9 @@ for degree in degrees:
     list_ftime = []
     for f_time in flight_times:
         dictionary = ChebyshevDictionary(degree=degree, dim=3)
-        edmd = EDMD(dictionary=dictionary, flight_time=f_time)
-        K = edmd.fit(scaled_data)
+        edmd = EDMD(dictionary=dictionary)
+        X_snap, Y_snap = make_snapshots(scaled_data, lag=f_time)
+        K = edmd.fit_snapshots(X_snap, Y_snap)
         list_ftime.append(edmd)
     list_degree.append(list_ftime)
 

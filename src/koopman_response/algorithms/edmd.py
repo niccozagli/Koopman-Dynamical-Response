@@ -6,8 +6,10 @@ import numpy as np
 from tqdm import tqdm
 
 from koopman_response.algorithms.dictionaries import Dictionary
-from koopman_response.utils.koopman import Koopman_correlation_function
-from koopman_response.utils.signal import get_spectral_properties
+from koopman_response.utils.koopman import (
+    Koopman_correlation_function,
+    get_spectral_properties,
+)
 
 
 class EDMD:
@@ -18,11 +20,8 @@ class EDMD:
     data or snapshot pairs (X, Y).
     """
 
-    def __init__(self, dictionary: Dictionary, flight_time: int = 1):
-        if flight_time < 1:
-            raise ValueError("flight_time must be >= 1")
+    def __init__(self, dictionary: Dictionary):
         self.dictionary = dictionary
-        self.flight_time = flight_time
         self.G: Optional[np.ndarray] = None
         self.A: Optional[np.ndarray] = None
         self.K: Optional[np.ndarray] = None
@@ -31,32 +30,13 @@ class EDMD:
     def n_features(self) -> int:
         return self.dictionary.n_features
 
-    def _create_snapshots(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n_samples = data.shape[0]
-        if self.flight_time >= n_samples:
-            raise ValueError(
-                f"flight_time={self.flight_time} is too large for data length {n_samples}"
-            )
-        return data[: -self.flight_time], data[self.flight_time :]
-
-    def fit(
-        self,
-        data: np.ndarray,
-        batch_size: int = 10_000,
-        show_progress: bool = True,
-    ) -> np.ndarray:
-        """
-        Fit EDMD on a single trajectory (data) using the configured flight_time.
-        """
-        X, Y = self._create_snapshots(data)
-        return self.fit_snapshots(X, Y, batch_size=batch_size, show_progress=show_progress)
-
     def fit_snapshots(
         self,
         X: np.ndarray,
         Y: np.ndarray,
         batch_size: int = 10_000,
         show_progress: bool = True,
+        fit_dictionary: bool = True,
     ) -> np.ndarray:
         """
         Fit EDMD on snapshot pairs (X, Y).
@@ -66,11 +46,16 @@ class EDMD:
         if batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
 
+        if fit_dictionary:
+            self.dictionary.fit(X)
+
         n_samples = X.shape[0]
         n_features = self.dictionary.n_features
+        sample_phi = self.dictionary.evaluate_batch(X[:1])
+        dtype = sample_phi.dtype
 
-        G = np.zeros((n_features, n_features))
-        A = np.zeros((n_features, n_features))
+        G = np.zeros((n_features, n_features), dtype=dtype)
+        A = np.zeros((n_features, n_features), dtype=dtype)
 
         iterator = range(0, n_samples, batch_size)
         for start in tqdm(iterator, disable=not show_progress):
@@ -111,8 +96,9 @@ class Tikhonov:
 
     def tikhonov(self, edmd: EDMD) -> np.ndarray:
         if edmd.G is None or edmd.A is None:
-            raise ValueError("G and A are not set. Run fit() first.")
-        return np.linalg.solve(edmd.G + self.alpha * np.eye(edmd.G.shape[0]), edmd.A)
+            raise ValueError("G and A are not set. Run fit_snapshots() first.")
+        eye = np.eye(edmd.G.shape[0], dtype=edmd.G.dtype)
+        return np.linalg.solve(edmd.G + self.alpha * eye, edmd.A)
 
 
 class TSVD:
@@ -130,7 +116,7 @@ class TSVD:
 
     def decompose(self, edmd: EDMD) -> np.ndarray:
         if edmd.G is None or edmd.A is None:
-            raise ValueError("G and A are not set. Run fit() first.")
+            raise ValueError("G and A are not set. Run fit_snapshots() first.")
 
         U, S, Vt = np.linalg.svd(edmd.G, full_matrices=False)
         r = np.sum(S > self.rel_threshold * S[0])
@@ -155,12 +141,10 @@ class TSVD:
         self.reduced_left_eigvecs = left_eigvecs
         self.eigenvalues = eigenvalues
 
-    def find_continuous_time_eigenvalues(
-        self, dt: float, tau: int = 1, flight_time: int = 1
-    ) -> None:
+    def find_continuous_time_eigenvalues(self, dt: float, tau: int = 1) -> None:
         if self.eigenvalues is None:
             return
-        self.lambdas = np.log(self.eigenvalues) / (dt * tau * flight_time)
+        self.lambdas = np.log(self.eigenvalues) / (dt * tau)
 
     def project_reduced_space(self, dictionary_projections: np.ndarray) -> np.ndarray:
         if self.Ur is None:

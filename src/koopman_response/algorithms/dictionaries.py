@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from itertools import product
-from typing import DefaultDict, Dict, List, Tuple, cast
+from typing import DefaultDict, Dict, List, Sequence, Tuple, cast
 
 import numpy as np
 from scipy.special import eval_chebyt
@@ -20,8 +20,23 @@ def chebyshev_indices(degree: int, dim: int) -> List[Tuple[int, ...]]:
     return indices
 
 
+def fourier_indices(order: int, dim: int) -> List[Tuple[int, ...]]:
+    indices: List[Tuple[int, ...]] = []
+    for k in product(range(-order, order + 1), repeat=dim):
+        if all(ki == 0 for ki in k):
+            continue
+        if sum(abs(ki) for ki in k) <= order:
+            indices.append(cast(Tuple[int, ...], k))
+    return indices
+
+
 class Dictionary(ABC):
     """Abstract dictionary interface for EDMD-style algorithms."""
+
+    def fit(self, data: np.ndarray) -> "Dictionary":
+        """Optional data-dependent fitting. Default is a no-op."""
+        _ = data
+        return self
 
     @abstractmethod
     def evaluate(self, x: np.ndarray) -> np.ndarray:
@@ -195,3 +210,84 @@ class ChebyshevDictionary(Dictionary):
         dictionary_decomposition["xy"] = coeff_for_degree((1, 1, 0))
 
         return dictionary_decomposition
+
+
+class FourierDictionary(Dictionary):
+    """
+    Complex Fourier dictionary on a torus with possibly different periods per axis.
+
+    Features: exp(i * 2π * sum_d k_d * x_d / L_d) for integer k with |k|_1 <= order.
+    Inputs are assumed to be in the same units as L (period L per dimension).
+    If normalize=True, all features are scaled by 1/sqrt(prod(L)).
+    """
+
+    def __init__(
+        self,
+        order: int,
+        dim: int = 1,
+        L: float | Sequence[float] = 2 * np.pi,
+        include_constant: bool = True,
+        normalize: bool = True,
+    ):
+        if order < 0:
+            raise ValueError("order must be >= 0")
+        if dim < 1:
+            raise ValueError("dim must be >= 1")
+        self.order = order
+        self.dim = dim
+        self.include_constant = include_constant
+        self.k_vectors = np.array(fourier_indices(order, dim), dtype=int)
+
+        if isinstance(L, (list, tuple, np.ndarray)):
+            if len(L) != dim:
+                raise ValueError("L must have length dim when passing a sequence")
+            self.L = np.array(L, dtype=float)
+        else:
+            self.L = np.full(dim, float(L))
+
+        if np.any(self.L <= 0):
+            raise ValueError("L must be positive in every dimension")
+
+        self.normalize = normalize
+        self._norm_factor = 1.0 / np.sqrt(np.prod(self.L)) if normalize else 1.0
+
+    @property
+    def n_features(self) -> int:
+        base = 1 if self.include_constant else 0
+        return base + self.k_vectors.shape[0]
+
+    def evaluate(self, x: np.ndarray) -> np.ndarray:
+        if x.shape[0] != self.dim:
+            raise ValueError(f"Expected x with dim={self.dim}, got {x.shape[0]}")
+        if self.k_vectors.size == 0:
+            base = np.array([1.0], dtype=np.complex128) if self.include_constant else np.array([], dtype=np.complex128)
+            return base * self._norm_factor
+
+        phases = (self.k_vectors / self.L) @ x
+        values = np.exp(1j * 2 * np.pi * phases)
+
+        if self.include_constant:
+            return np.concatenate(([1.0], values)).astype(np.complex128) * self._norm_factor
+        return values.astype(np.complex128) * self._norm_factor
+
+    def evaluate_batch(self, data: np.ndarray) -> np.ndarray:
+        if data.shape[1] != self.dim:
+            raise ValueError(
+                f"Expected data with dim={self.dim}, got {data.shape[1]}"
+            )
+
+        n_samples = data.shape[0]
+        n_k = self.k_vectors.shape[0]
+
+        if n_k == 0:
+            if self.include_constant:
+                return np.ones((n_samples, 1), dtype=np.complex128) * self._norm_factor
+            return np.empty((n_samples, 0), dtype=np.complex128)
+
+        phases = (data / self.L) @ self.k_vectors.T
+        values = np.exp(1j * 2 * np.pi * phases)
+
+        if self.include_constant:
+            ones = np.ones((n_samples, 1), dtype=np.complex128)
+            return np.concatenate((ones, values), axis=1) * self._norm_factor
+        return values.astype(np.complex128) * self._norm_factor
