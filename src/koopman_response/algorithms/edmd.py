@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 from koopman_response.algorithms.dictionaries import Dictionary
+from koopman_response.algorithms.spectrum import KoopmanSpectrum
 from koopman_response.utils.koopman import (
     Koopman_correlation_function,
     get_spectral_properties,
@@ -66,8 +67,8 @@ class EDMD:
             Phi_X = self.dictionary.evaluate_batch(X_batch)
             Phi_Y = self.dictionary.evaluate_batch(Y_batch)
 
-            G += Phi_X.T @ Phi_X
-            A += Phi_X.T @ Phi_Y
+            G += Phi_X.conj().T @ Phi_X
+            A += Phi_X.conj().T @ Phi_Y
 
         G /= n_samples
         A /= n_samples
@@ -75,7 +76,7 @@ class EDMD:
         self.G = G
         self.A = A
         self.K = np.linalg.solve(G, A)
-        return self.K
+        return self.K # type:ignore
 
     def evaluate_dictionary(self, data: np.ndarray) -> np.ndarray:
         return self.dictionary.evaluate_batch(data)
@@ -88,6 +89,16 @@ class EDMD:
         """
         psi = self.dictionary.evaluate_batch(data)
         return psi @ eigenvectors
+
+    def spectrum(self) -> KoopmanSpectrum:
+        if self.K is None:
+            raise ValueError("K is not set. Run fit_snapshots() first.")
+        return KoopmanSpectrum.from_koopman_matrix(self.K, self.dictionary)
+
+    def gram(self) -> np.ndarray:
+        if self.G is None:
+            raise ValueError("G is not set. Run fit_snapshots() first.")
+        return self.G
 
 
 class Tikhonov:

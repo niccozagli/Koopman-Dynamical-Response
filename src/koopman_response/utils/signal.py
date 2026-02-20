@@ -7,32 +7,6 @@ import statsmodels.api as sm
 from scipy.signal import correlate, correlation_lags
 
 
-def check_if_complex(obs: np.ndarray):
-    return np.iscomplex(obs).any()
-
-
-def get_acf(
-    obs: np.ndarray,
-    Dt: float,
-    nlags: int = 1500,
-):
-    is_complex = check_if_complex(obs)
-    if is_complex:
-        obs_real, obs_imag = np.real(obs), np.imag(obs)
-        cf_real = np.asarray(
-            sm.tsa.acf(obs_real, nlags=nlags, qstat=False, alpha=None)
-        ) * np.var(obs_real)
-        cf_imag = np.asarray(
-            sm.tsa.acf(obs_imag, nlags=nlags, qstat=False, alpha=None)
-        ) * np.var(obs_imag)
-        cf = cf_real + cf_imag
-    else:
-        cf = np.asarray(sm.tsa.acf(obs, nlags=nlags)) * np.var(obs)
-
-    lags = np.linspace(0, nlags * Dt, nlags + 1)
-    return lags, cf
-
-
 def cross_correlation(
     x: np.ndarray,
     y: np.ndarray,

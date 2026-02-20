@@ -12,14 +12,14 @@ def _():
     from koopman_response.systems.chaotic_map import ChaoticMap1D
     from koopman_response.algorithms.edmd import EDMD
     from koopman_response.algorithms.dictionaries import FourierDictionary
-    from koopman_response.utils.preprocessing import make_snapshots 
-    from koopman_response.utils import get_spectral_properties
+    from koopman_response.utils.preprocessing import make_snapshots
+    from koopman_response.utils.signal import cross_correlation 
 
     return (
         ChaoticMap1D,
         EDMD,
         FourierDictionary,
-        get_spectral_properties,
+        cross_correlation,
         make_snapshots,
         np,
         plt,
@@ -62,18 +62,10 @@ def _(plt, xs):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
-    ### EDMD routine
-    """)
-    return
-
-
-@app.cell
 def _(xs):
     transient = 500
     flight_time = 1
-    order = 25
+    order = 30
     data_map = xs[transient:].reshape(-1, 1)
     return data_map, flight_time, order
 
@@ -91,18 +83,15 @@ def _(
     dictionary = FourierDictionary(order=order, dim=1, L=2 * np.pi, include_constant=True)
     edmd = EDMD(dictionary=dictionary)
     X_snap, Y_snap = make_snapshots(data_map, lag=flight_time)
-    K = edmd.fit_snapshots(X_snap, Y_snap, batch_size=20000, show_progress=True)
-    return (K,)
+    K = edmd.fit_snapshots(X=X_snap, Y=Y_snap, batch_size=20000, show_progress=True)
+    spectrum = edmd.spectrum()
+    koop_gram_matrix = spectrum.eigenfunction_inner_product(edmd.gram())
+    return edmd, koop_gram_matrix, spectrum
 
 
 @app.cell
-def _(K, get_spectral_properties):
-    eigs , right_eigens , left_eigens = get_spectral_properties(K)
-    return (eigs,)
-
-
-@app.cell
-def _(eigs, np, plt):
+def _(np, plt, spectrum):
+    eigs = spectrum.eigenvalues
     fig_eigs, ax_eigs = plt.subplots(figsize=(4, 4))
     ax_eigs.plot(eigs[:20].real, eigs[:20].imag,".",color="red")
     ax_eigs.set_xlabel("Re")
@@ -113,6 +102,66 @@ def _(eigs, np, plt):
     ax_eigs.set_aspect("equal", adjustable="box")
     plt.tight_layout()
     plt.show()
+    return
+
+
+@app.cell
+def _(
+    cross_correlation,
+    data_map,
+    flight_time,
+    koop_gram_matrix,
+    np,
+    plt,
+    spectrum,
+):
+    eigfunc_vals = spectrum.evaluate_eigenfunctions(data_map)
+    Phi2= eigfunc_vals[:,1]
+
+    lags , cf = cross_correlation(Phi2,Phi2,dt=flight_time,normalization="biased")
+    cf_theoretical = [ koop_gram_matrix[1,1]*spectrum.eigenvalues[1]**i for i in lags ] 
+    fig_corr , ax_corr = plt.subplots(nrows=2,sharex=True)
+    ax_corr[0].plot(lags,np.real(cf))
+    ax_corr[0].plot(lags,np.real(cf_theoretical),'o')
+    ax_corr[1].plot(lags,np.imag(cf))
+    ax_corr[1].plot(lags,np.imag(cf_theoretical),'o')
+    ax_corr[0].set_xlim((-0.5,20))
+    plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Correlation functions of observables
+    """)
+    return
+
+
+@app.cell
+def _(cross_correlation, data_map, edmd, np, spectrum):
+    from pandas.core.missing import find_valid_index
+    observable = (data_map.reshape(-1) - np.pi)**2
+    lags_obs , corr_obs = cf_observable = cross_correlation(observable,observable,dt=1,normalization="biased")
+    psi_inner = spectrum.psi_inner(data=data_map,f_values=observable)
+    f_hat =spectrum.best_coefficients(edmd.gram(),psi_inner)
+    koop_corr = spectrum.correlation_function(edmd.gram(),f_hat,f_hat)
+    return corr_obs, koop_corr, lags_obs
+
+
+@app.cell
+def _(corr_obs, koop_corr, lags_obs, np, plt):
+    fig_corr_obs , ax_corr_obs = plt.subplots()
+    ax_corr_obs.plot(lags_obs,corr_obs)
+    ax_corr_obs.plot(lags_obs,np.real(koop_corr(lags_obs)),'.')
+    ax_corr_obs.set_xlim((-1,20))
+
+    plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 

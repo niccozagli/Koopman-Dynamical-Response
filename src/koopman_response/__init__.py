@@ -1,6 +1,7 @@
 """Top-level package for KoopmanResponse."""
 
 from koopman_response.algorithms.edmd import EDMD, ProjectionKoopmanSpace, Tikhonov, TSVD
+from koopman_response.algorithms.spectrum import KoopmanSpectrum
 from koopman_response.algorithms.dictionaries import (
     ChebyshevDictionary,
     Dictionary,
@@ -16,6 +17,7 @@ __all__ = [
     "Dictionary",
     "FourierDictionary",
     "EDMD",
+    "KoopmanSpectrum",
     "ChaoticMap1D",
     "NoisyChaoticMap2D",
     "integrate_em",
