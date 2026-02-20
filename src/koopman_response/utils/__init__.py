@@ -4,7 +4,7 @@ from koopman_response.utils.koopman import (
     Koopman_correlation_function,
     get_spectral_properties,
 )
-from koopman_response.utils.preprocessing import normalise_data_chebyshev
+from koopman_response.utils.preprocessing import minmax_scale
 from koopman_response.utils.preprocessing import make_snapshots
 from koopman_response.utils.signal import (
     cross_correlation,
@@ -19,6 +19,6 @@ __all__ = [
     "get_data_folder_path",
     "get_project_root",
     "get_spectral_properties",
-    "normalise_data_chebyshev",
+    "minmax_scale",
     "make_snapshots",
 ]

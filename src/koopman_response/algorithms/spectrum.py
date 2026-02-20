@@ -41,6 +41,12 @@ class KoopmanSpectrum:
         phi = self.dictionary.evaluate_batch(data)
         return phi @ self.right_eigvecs
 
+    def continuous_time_eigenvalues(self, dt_eff: float) -> np.ndarray:
+        """
+        Convert discrete-time eigenvalues to continuous-time using dt_eff.
+        """
+        return np.log(self.eigenvalues) / dt_eff
+
     def eigenfunction(self, i: int) -> Callable[[np.ndarray], np.ndarray]:
         """
         Return a callable eigenfunction phi_i(x).
@@ -106,7 +112,7 @@ class KoopmanSpectrum:
             return coeffs[:, 0]
         return coeffs
 
-    def correlation_function(
+    def correlation_function_discrete(
         self,
         G: np.ndarray,
         coeff_f: np.ndarray,
@@ -141,5 +147,43 @@ class KoopmanSpectrum:
             k_arr = np.asarray(k)
             pow_k = np.power(eigs, k_arr[:, None])
             return (pow_k * coeff_f[None, :]) @ row
+
+        return _corr
+
+    def correlation_function_continuous(
+        self,
+        G: np.ndarray,
+        coeff_f: np.ndarray,
+        coeff_g: np.ndarray,
+        eigenvalues: np.ndarray | None = None,
+    ):
+        """
+        Return a callable C_fg(t) using Koopman eigenfunctions (continuous time):
+
+            C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
+
+        where G_phi = Xi^* G Xi and lambda are continuous-time eigenvalues used in
+        the exponential. If eigenvalues is None, self.eigenvalues are used.
+        """
+        eigs = self.eigenvalues if eigenvalues is None else eigenvalues
+        G_phi = self.eigenfunction_inner_product(G)
+
+        coeff_f = np.asarray(coeff_f).reshape(-1)
+        coeff_g = np.asarray(coeff_g).reshape(-1)
+        eigs = np.asarray(eigs).reshape(-1)
+
+        # drop the static mode
+        coeff_f = coeff_f[1:]
+        coeff_g = coeff_g[1:]
+        eigs = eigs[1:]
+        G_phi = G_phi[1:, 1:]
+        row = coeff_g.conj() @ G_phi
+
+        def _corr(t):
+            if np.isscalar(t):
+                return row @ (coeff_f * np.exp(t * eigs))
+            t_arr = np.asarray(t)
+            exp_t = np.exp(np.outer(t_arr, eigs))
+            return (exp_t * coeff_f[None, :]) @ row
 
         return _corr

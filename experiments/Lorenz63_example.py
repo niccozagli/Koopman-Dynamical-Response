@@ -8,74 +8,119 @@ app = marimo.App(width="medium")
 def _():
     import numpy as np
     import matplotlib.pyplot as plt
-
-    from koopman_response.systems.integrators import integrate_em
+    from koopman_response import KoopmanSpectrum
+    from koopman_response.algorithms.edmd import EDMD
+    from koopman_response.algorithms.dictionaries import ChebyshevDictionary
+    from koopman_response.algorithms.regularization import TSVDRegularizer
     from koopman_response.systems.lorenz63 import NoisyLorenz63
     from koopman_response.utils.signal import cross_correlation
+    from koopman_response.utils.preprocessing import make_snapshots, minmax_scale
 
-    return NoisyLorenz63, cross_correlation, integrate_em, np, plt
-
-
-@app.cell
-def _():
-    t_max = 5000
-    dt = 0.001
-    tau = 10
-    noise = 2
-    return dt, noise, t_max, tau
-
-
-@app.cell
-def _(NoisyLorenz63, dt, integrate_em, noise, np, t_max, tau):
-    lorenz = NoisyLorenz63(noise=float(noise))
-
-    rng = np.random.default_rng()
-    t, X = integrate_em(
-        lorenz,
-        t_span=(0.0, float(t_max)),
-        dt=float(dt),
-        tau=int(tau),
-        transient=0.0,
-        rng=rng,
-        show_progress=True,
+    return (
+        ChebyshevDictionary,
+        EDMD,
+        KoopmanSpectrum,
+        NoisyLorenz63,
+        TSVDRegularizer,
+        cross_correlation,
+        make_snapshots,
+        minmax_scale,
+        np,
+        plt,
     )
-    return (X,)
 
 
 @app.cell
-def _(X, plt):
-    fig = plt.figure(figsize=(7, 5))
-    ax = fig.add_subplot(111, projection="3d")
-    ax.plot(X[:, 0], X[:, 1], X[:, 2], lw=0.7, alpha=0.8)
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
-    ax.set_title("Noisy Lorenz 63 Trajectory")
+def _(NoisyLorenz63):
+    lorenz = NoisyLorenz63()
+    t, X = lorenz.integrate_em_jit(
+        t_span=(0.0, 10_000),
+        dt=0.001,
+        tau=10,
+        transient=1000.0,
+    )
+    dt = t[1] - t[0]
+    return X, dt
+
+
+@app.cell
+def _(X, cross_correlation, dt, plt):
+    fig_cf ,ax_cf =plt.subplots()
+    signal = X[:,2]
+    lags, cf = cross_correlation(signal,signal,dt=dt,normalization="biased")
+
+    ax_cf.plot(lags,cf)
+    plt.xlim((-0.5,15))
+    plt.show()
+    return
+
+
+@app.cell
+def _(ChebyshevDictionary, EDMD, X, dt, make_snapshots, minmax_scale):
+    scaled_data, data_min, data_max = minmax_scale(data=X, feature_range=(-1.0, 1.0))
+    lag = 10
+    dt_eff = dt * lag
+    X_snap, Y_snap = make_snapshots(scaled_data, lag=lag)
+
+    dictionary = ChebyshevDictionary(degree=15, dim=3)
+    edmd = EDMD(dictionary=dictionary, dt_eff=dt_eff)
+    K = edmd.fit_snapshots(X_snap, Y_snap, batch_size=10000, show_progress=True)
+    return dictionary, edmd, scaled_data
+
+
+@app.cell
+def _(KoopmanSpectrum, TSVDRegularizer, dictionary, edmd):
+    tsvd = TSVDRegularizer(rel_threshold=1e-4)
+    K_r, U_r, S_r = tsvd.solve(edmd.G, edmd.A)
+
+    spectrum = KoopmanSpectrum.from_koopman_matrix(K_r,dictionary)
+    eigs_ct = spectrum.continuous_time_eigenvalues(dt_eff=edmd.dt_eff)
+    return S_r, U_r, eigs_ct, spectrum
+
+
+@app.cell
+def _(eigs_ct, plt):
+    fig_eigs, ax_eigs = plt.subplots(figsize=(4, 4))
+    ax_eigs.plot(eigs_ct.real, eigs_ct.imag, "x", ms=6)
+    ax_eigs.set_xlabel("Re")
+    ax_eigs.set_ylabel("Im")
+    ax_eigs.grid(alpha=0.4)
+    ax_eigs.set_title("Eigenvalues Generator")
+    plt.xlim(-1.5,0.2)
+    plt.ylim(-20,20)
     plt.tight_layout()
     plt.show()
     return
 
 
 @app.cell
-def _(X, cross_correlation, dt):
-    x,y,z = X[:,0] , X[:,1] , X[:,2]
-    records_cf = []
-    for signal in [x,y,z]:
-        l , c = cross_correlation(signal,signal,dt=dt)
-        records_cf.append((l,c))
-    return (records_cf,)
+def _(S_r, U_r, np, scaled_data, spectrum):
+    observable = scaled_data[:,2]
+    psi_inner = spectrum.psi_inner(scaled_data, observable )   # <psi,f>
+    c_hat = (np.diag(1/np.sqrt(S_r)) @ U_r.conj().T) @ psi_inner
+    f_hat = spectrum.left_eigvecs.conj().T @ c_hat
+    return f_hat, observable
 
 
 @app.cell
-def _(plt, records_cf):
-    fig_cf ,ax_cf =plt.subplots(nrows=3,sharex=True)
-    for i, (lags, correlation_function)  in enumerate(records_cf):
-        ax_cf[i].plot(lags,correlation_function)
+def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, spectrum):
+    G_hat = np.eye(f_hat.shape[0], dtype=np.complex128)
+    koop_corr = spectrum.correlation_function_continuous(
+        G=G_hat,
+        coeff_f=f_hat,
+        coeff_g=f_hat,
+        eigenvalues=eigs_ct,
+    )
+    lags_obs, corr_obs = cross_correlation(observable,observable,dt=dt,normalization="biased",max_lag=10**4)
+    return corr_obs, koop_corr, lags_obs
 
-    plt.xlim((0,5))
-    ax_cf[0].set_ylim((0,70))
-    ax_cf[1].set_ylim((0,70))
-    ax_cf[2].set_ylim((-30,30))
+
+@app.cell
+def _(corr_obs, koop_corr, lags_obs, np, plt):
+    fig_corr_obs, ax_corr_obs = plt.subplots()
+    ax_corr_obs.plot(lags_obs, corr_obs)
+    ax_corr_obs.plot(lags_obs, np.real(koop_corr(lags_obs)), ".",ms=3)
+    ax_corr_obs.set_xlim((-1, 15))
     plt.show()
     return
 

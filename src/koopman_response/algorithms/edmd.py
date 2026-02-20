@@ -21,8 +21,9 @@ class EDMD:
     data or snapshot pairs (X, Y).
     """
 
-    def __init__(self, dictionary: Dictionary):
+    def __init__(self, dictionary: Dictionary, dt_eff: float | None = None):
         self.dictionary = dictionary
+        self.dt_eff = dt_eff
         self.G: Optional[np.ndarray] = None
         self.A: Optional[np.ndarray] = None
         self.K: Optional[np.ndarray] = None
@@ -89,11 +90,6 @@ class EDMD:
         """
         psi = self.dictionary.evaluate_batch(data)
         return psi @ eigenvectors
-
-    def spectrum(self) -> KoopmanSpectrum:
-        if self.K is None:
-            raise ValueError("K is not set. Run fit_snapshots() first.")
-        return KoopmanSpectrum.from_koopman_matrix(self.K, self.dictionary)
 
     def gram(self) -> np.ndarray:
         if self.G is None:

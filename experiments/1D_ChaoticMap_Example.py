@@ -1,7 +1,7 @@
-import marimo
+import marimo as mo
 
 __generated_with = "0.19.11"
-app = marimo.App(width="medium")
+app = mo.App(width="medium")
 
 
 @app.cell
@@ -12,6 +12,7 @@ def _():
     from koopman_response.systems.chaotic_map import ChaoticMap1D
     from koopman_response.algorithms.edmd import EDMD
     from koopman_response.algorithms.dictionaries import FourierDictionary
+    from koopman_response.algorithms.spectrum import KoopmanSpectrum
     from koopman_response.utils.preprocessing import make_snapshots
     from koopman_response.utils.signal import cross_correlation 
 
@@ -19,6 +20,7 @@ def _():
         ChaoticMap1D,
         EDMD,
         FourierDictionary,
+        KoopmanSpectrum,
         cross_correlation,
         make_snapshots,
         np,
@@ -74,6 +76,7 @@ def _(xs):
 def _(
     EDMD,
     FourierDictionary,
+    KoopmanSpectrum,
     data_map,
     flight_time,
     make_snapshots,
@@ -84,7 +87,7 @@ def _(
     edmd = EDMD(dictionary=dictionary)
     X_snap, Y_snap = make_snapshots(data_map, lag=flight_time)
     K = edmd.fit_snapshots(X=X_snap, Y=Y_snap, batch_size=20000, show_progress=True)
-    spectrum = edmd.spectrum()
+    spectrum = KoopmanSpectrum.from_koopman_matrix(K, dictionary)
     koop_gram_matrix = spectrum.eigenfunction_inner_product(edmd.gram())
     return dictionary, edmd, koop_gram_matrix, spectrum
 
@@ -132,10 +135,11 @@ def _(
 
 @app.cell
 def _(mo):
-    mo.md(r"""
-    ### Correlation functions of observables
-    """)
-    return
+    return mo.md(
+        r"""
+        ### Correlation functions of observables
+        """
+    )
 
 
 @app.cell
@@ -144,7 +148,7 @@ def _(cross_correlation, data_map, edmd, np, spectrum):
     lags_obs , corr_obs = cf_observable = cross_correlation(observable,observable,dt=1,normalization="biased")
     psi_inner = spectrum.psi_inner(data=data_map,f_values=observable)
     f_hat =spectrum.best_coefficients(edmd.gram(),psi_inner)
-    koop_corr = spectrum.correlation_function(edmd.gram(),f_hat,f_hat)
+    koop_corr = spectrum.correlation_function_discrete(edmd.gram(), f_hat, f_hat)
     return corr_obs, f_hat, koop_corr, lags_obs
 
 
@@ -161,10 +165,11 @@ def _(corr_obs, koop_corr, lags_obs, np, plt):
 
 @app.cell
 def _(mo):
-    mo.md(r"""
-    ### Response Function
-    """)
-    return
+    return mo.md(
+        r"""
+        ### Response Function
+        """
+    )
 
 
 @app.cell
@@ -177,7 +182,7 @@ def _(data_map, dictionary, edmd, f_hat, np, spectrum):
 
     gamma = np.linalg.pinv( G_phi,rcond=1e-5) @ delta_gamma
 
-    koop_resp = spectrum.correlation_function(G=edmd.gram(),coeff_f=f_hat,coeff_g=gamma)
+    koop_resp = spectrum.correlation_function_discrete(G=edmd.gram(), coeff_f=f_hat, coeff_g=gamma)
     return (koop_resp,)
 
 
@@ -186,12 +191,6 @@ def _(koop_resp, np, plt):
     fig_response , ax_response = plt.subplots()
     t= np.arange(0,30,0.01)
     ax_response.plot(t,np.real(koop_resp(t)))
-
-    return
-
-
-@app.cell
-def _():
     return
 
 

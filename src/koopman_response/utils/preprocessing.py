@@ -5,24 +5,29 @@ from typing import Tuple
 import numpy as np
 
 
-def normalise_data_chebyshev(
+def minmax_scale(
     data: np.ndarray,
+    feature_range: Tuple[float, float] = (-1.0, 1.0),
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Normalize each column of data to [-1, 1].
+    Min-max scale each column of data to a target range.
 
     Parameters:
         data: (n_samples, d) input array.
+        feature_range: target range (min, max), default (-1, 1).
 
     Returns:
-        scaled_data: normalized data in [-1, 1]
+        scaled_data: normalized data in feature_range
         data_min: minimum values per column (shape: d,)
         data_max: maximum values per column (shape: d,)
     """
     data_min = data.min(axis=0)
     data_max = data.max(axis=0)
-    scaled = 2 * (data - data_min) / (data_max - data_min) - 1
+    a, b = feature_range
+    scaled = (b - a) * (data - data_min) / (data_max - data_min) + a
     return scaled, data_min, data_max
+
+
 
 
 def make_snapshots(data: np.ndarray, lag: int = 1) -> Tuple[np.ndarray, np.ndarray]:
