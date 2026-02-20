@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from itertools import product
-from typing import DefaultDict, Dict, List, Sequence, Tuple, cast
+from typing import Callable, DefaultDict, Dict, List, Sequence, Tuple, cast
 
 import numpy as np
 from scipy.special import eval_chebyt
@@ -50,6 +50,54 @@ class Dictionary(ABC):
     @abstractmethod
     def n_features(self) -> int:
         """Number of dictionary features."""
+
+    def build_derivative_matrix(self, direction: int) -> np.ndarray:
+        """
+        Optional: return a matrix D such that D @ c gives coefficients of
+        d/dx_direction applied to a dictionary expansion.
+        """
+        raise NotImplementedError(
+            "build_derivative_matrix not implemented for this dictionary"
+        )
+
+    def delta_from_trajectory(
+        self, data: np.ndarray, X_values: np.ndarray
+    ) -> np.ndarray:
+        """
+        Optional: compute Delta_i = <X · ∇psi_i^*, 1>_0 from trajectory samples.
+        """
+        raise NotImplementedError(
+            "delta_from_trajectory not implemented for this dictionary"
+        )
+
+    def delta_from_callable(
+        self, data: np.ndarray, X_fn: Callable[[np.ndarray], np.ndarray]
+    ) -> np.ndarray:
+        """
+        Optional: compute Delta_i from trajectory samples by evaluating X_fn on data.
+        """
+        X_values = X_fn(data)
+        return self.delta_from_trajectory(data, X_values)
+
+    def response_coefficients(self, G: np.ndarray, delta: np.ndarray) -> np.ndarray:
+        """
+        Compute response coefficients:
+
+            gamma = G^+ Delta
+        """
+        return np.linalg.pinv(G) @ delta
+
+    def delta_from_constant(
+        self, data: np.ndarray, X_const: np.ndarray
+    ) -> np.ndarray:
+        """
+        Optional: compute Delta_i for constant forcing X_const.
+        """
+        X_const = np.asarray(X_const)
+        if X_const.ndim != 1:
+            raise ValueError("X_const must be a 1D array of shape (dim,)")
+        X_values = np.tile(X_const, (data.shape[0], 1))
+        return self.delta_from_trajectory(data, X_values)
 
 
 class ChebyshevDictionary(Dictionary):
@@ -291,3 +339,78 @@ class FourierDictionary(Dictionary):
             ones = np.ones((n_samples, 1), dtype=np.complex128)
             return np.concatenate((ones, values), axis=1) * self._norm_factor
         return values.astype(np.complex128) * self._norm_factor
+
+    def derivative_factors(self) -> np.ndarray:
+        """
+        Return factors F such that:
+            d/dx_d psi_j = F[j, d] * psi_j
+        for each basis function psi_j.
+        """
+        n_k = self.k_vectors.shape[0]
+        factors = np.zeros((self.n_features, self.dim), dtype=np.complex128)
+        if n_k == 0:
+            return factors
+
+        base = 1 if self.include_constant else 0
+        coeffs = (1j * 2 * np.pi) * (self.k_vectors / self.L)
+        factors[base : base + n_k, :] = coeffs
+        return factors
+
+    def build_derivative_matrix(self, direction: int) -> np.ndarray:
+        """
+        Diagonal matrix for d/dx_direction in the Fourier basis.
+        """
+        if direction < 0 or direction >= self.dim:
+            raise ValueError(f"direction must be in [0, {self.dim - 1}]")
+        factors = self.derivative_factors()[:, direction]
+        return np.diag(factors)
+
+    def delta_from_trajectory(
+        self, data: np.ndarray, X_values: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute Delta_i = (1/N) sum_t X(x_t) · ∇psi_i^*(x_t)
+        for Fourier dictionary basis functions.
+        """
+        data = np.asarray(data)
+        X_values = np.asarray(X_values)
+
+        if data.ndim != 2 or data.shape[1] != self.dim:
+            raise ValueError("data must have shape (n_samples, dim)")
+        if X_values.shape != data.shape:
+            raise ValueError("X_values must have the same shape as data")
+
+        phi = self.evaluate_batch(data)
+        factors = self.derivative_factors()
+
+        phi_conj = phi.conj()
+        factors_conj = factors.conj()
+
+        delta = np.zeros(self.n_features, dtype=np.complex128)
+        for d in range(self.dim):
+            delta += np.mean(
+                phi_conj * factors_conj[:, d] * X_values[:, d][:, None], axis=0
+            )
+
+        return delta
+
+    def delta_from_constant(
+        self, data: np.ndarray, X_const: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute Delta_i = (1/N) sum_t X_const · ∇psi_i^*(x_t)
+        for constant forcing X_const.
+        """
+        data = np.asarray(data)
+        X_const = np.asarray(X_const)
+        if data.ndim != 2 or data.shape[1] != self.dim:
+            raise ValueError("data must have shape (n_samples, dim)")
+        if X_const.ndim != 1 or X_const.shape[0] != self.dim:
+            raise ValueError("X_const must have shape (dim,)")
+
+        phi = self.evaluate_batch(data)
+        factors = self.derivative_factors()
+
+        phi_conj = phi.conj()
+        weights = factors.conj() @ X_const  # shape (n_features,)
+        return np.mean(phi_conj * weights[None, :], axis=0)

@@ -79,7 +79,10 @@ class KoopmanSpectrum:
             f_vals = f_vals[:, None]
         if f_vals.shape[0] != phi.shape[0]:
             raise ValueError("f_values and data must have matching first dimension")
-        return (phi.conj().T @ f_vals) / phi.shape[0]
+        inner = (phi.conj().T @ f_vals) / phi.shape[0]
+        if inner.ndim == 2 and inner.shape[1] == 1:
+            return inner[:, 0]
+        return inner
 
     def phi_inner(self, G: np.ndarray, psi_inner: np.ndarray) -> np.ndarray:
         """
@@ -98,7 +101,10 @@ class KoopmanSpectrum:
         """
         G_phi = self.eigenfunction_inner_product(G)
         phi_inner = self.phi_inner(G, psi_inner)
-        return np.linalg.pinv(G_phi) @ phi_inner
+        coeffs = np.linalg.pinv(G_phi) @ phi_inner
+        if coeffs.ndim == 2 and coeffs.shape[1] == 1:
+            return coeffs[:, 0]
+        return coeffs
 
     def correlation_function(
         self,

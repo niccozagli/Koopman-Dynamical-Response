@@ -28,7 +28,7 @@ def _():
 
 @app.cell
 def _():
-    n_steps = 100_000
+    n_steps = 300_000
     x0 = 0.1
     return n_steps, x0
 
@@ -86,7 +86,7 @@ def _(
     K = edmd.fit_snapshots(X=X_snap, Y=Y_snap, batch_size=20000, show_progress=True)
     spectrum = edmd.spectrum()
     koop_gram_matrix = spectrum.eigenfunction_inner_product(edmd.gram())
-    return edmd, koop_gram_matrix, spectrum
+    return dictionary, edmd, koop_gram_matrix, spectrum
 
 
 @app.cell
@@ -140,13 +140,12 @@ def _(mo):
 
 @app.cell
 def _(cross_correlation, data_map, edmd, np, spectrum):
-    from pandas.core.missing import find_valid_index
-    observable = (data_map.reshape(-1) - np.pi)**2
+    observable = np.cos(data_map.reshape(-1))
     lags_obs , corr_obs = cf_observable = cross_correlation(observable,observable,dt=1,normalization="biased")
     psi_inner = spectrum.psi_inner(data=data_map,f_values=observable)
     f_hat =spectrum.best_coefficients(edmd.gram(),psi_inner)
     koop_corr = spectrum.correlation_function(edmd.gram(),f_hat,f_hat)
-    return corr_obs, koop_corr, lags_obs
+    return corr_obs, f_hat, koop_corr, lags_obs
 
 
 @app.cell
@@ -157,6 +156,37 @@ def _(corr_obs, koop_corr, lags_obs, np, plt):
     ax_corr_obs.set_xlim((-1,20))
 
     plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Response Function
+    """)
+    return
+
+
+@app.cell
+def _(data_map, dictionary, edmd, f_hat, np, spectrum):
+    X_const = np.array([1.0])  # dim=3
+
+    delta_psi = dictionary.delta_from_constant(data_map, X_const)
+    delta_gamma = spectrum.right_eigvecs.conj().T @ delta_psi
+    G_phi = spectrum.eigenfunction_inner_product(edmd.gram())
+
+    gamma = np.linalg.pinv( G_phi,rcond=1e-5) @ delta_gamma
+
+    koop_resp = spectrum.correlation_function(G=edmd.gram(),coeff_f=f_hat,coeff_g=gamma)
+    return (koop_resp,)
+
+
+@app.cell
+def _(koop_resp, np, plt):
+    fig_response , ax_response = plt.subplots()
+    t= np.arange(0,30,0.01)
+    ax_response.plot(t,np.real(koop_resp(t)))
+
     return
 
 
