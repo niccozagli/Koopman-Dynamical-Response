@@ -11,6 +11,72 @@ from scipy.special import eval_chebyt
 from koopman_response.utils.signal import find_index
 
 
+def _iter_active_dims(
+    X_values: np.ndarray | Dict[int, np.ndarray] | Sequence[np.ndarray | float | int | None],
+    n_samples: int,
+    dim: int,
+) -> List[Tuple[int, np.ndarray]]:
+    """
+    Normalize X_values into a list of (dim_index, values) pairs, skipping zeros.
+
+    Accepted formats:
+    - ndarray shape (n_samples, dim)
+    - dict {dim_index: values}
+    - sequence length dim with entries as arrays, scalars, or None
+    """
+    active: List[Tuple[int, np.ndarray]] = []
+
+    if isinstance(X_values, dict):
+        items = []
+        for k, v in X_values.items():
+            if isinstance(k, str):
+                if k.isdigit():
+                    d = int(k)
+                elif k.lower() in {"x", "y", "z"} and dim >= 3:
+                    d = {"x": 0, "y": 1, "z": 2}[k.lower()]
+                else:
+                    raise ValueError(
+                        "X_values dict keys must be int indices or one of 'x','y','z' for dim>=3"
+                    )
+            else:
+                d = int(k)
+            items.append((d, v))
+    elif isinstance(X_values, (list, tuple)):
+        if len(X_values) != dim:
+            raise ValueError("X_values sequence must have length dim")
+        items = list(enumerate(X_values))
+    else:
+        X_arr = np.asarray(X_values)
+        if X_arr.ndim != 2 or X_arr.shape != (n_samples, dim):
+            raise ValueError("X_values must have shape (n_samples, dim)")
+        for d in range(dim):
+            col = X_arr[:, d]
+            if np.any(col != 0):
+                active.append((d, col))
+        return active
+
+    for d, v in items:
+        if d < 0 or d >= dim:
+            raise ValueError(f"dimension index {d} is out of bounds for dim={dim}")
+        if v is None:
+            continue
+        arr = np.asarray(v)
+        if arr.ndim == 0:
+            if float(arr) == 0.0:
+                continue
+            arr = np.full(n_samples, float(arr))
+        elif arr.shape == (n_samples, 1):
+            arr = arr[:, 0]
+        elif arr.shape != (n_samples,):
+            raise ValueError(
+                "Each X_values entry must be a scalar or have shape (n_samples,) or (n_samples, 1)"
+            )
+        if np.any(arr != 0):
+            active.append((d, arr))
+
+    return active
+
+
 def chebyshev_indices(degree: int, dim: int) -> List[Tuple[int, ...]]:
     indices = [
         cast(Tuple[int, ...], i)
@@ -111,6 +177,7 @@ class ChebyshevDictionary(Dictionary):
         self.degree = degree
         self.dim = dim
         self.indices = chebyshev_indices(degree, dim)
+        self._derivative_matrices: Dict[int, np.ndarray] = {}
 
     @property
     def n_features(self) -> int:
@@ -210,6 +277,9 @@ class ChebyshevDictionary(Dictionary):
         Constructs the matrix A^{(direction)} such that:
         A @ c = coefficients of d/dx_i f(x), when f(x) = sum c_n psi_n(x)
         """
+        if direction in self._derivative_matrices:
+            return self._derivative_matrices[direction]
+
         n = len(self.indices)
         a = np.zeros((n, n))
         eye = np.eye(n)
@@ -217,7 +287,63 @@ class ChebyshevDictionary(Dictionary):
             a[:, i] = self.spectral_derivative_tensor_chebyshev_explicit(
                 eye[:, i], direction
             )
+        self._derivative_matrices[direction] = a
         return a
+
+    def delta_from_trajectory(
+        self, data: np.ndarray, X_values: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute Delta_i = (1/N) sum_t X(x_t) · ∇psi_i^*(x_t)
+        for Chebyshev dictionary basis functions.
+
+        Skips directions where X_values is identically zero.
+
+        X_values can be:
+        - ndarray (n_samples, dim)
+        - dict {dim_index: values}
+        - sequence length dim with arrays/scalars/None
+        """
+        data = np.asarray(data)
+
+        if data.ndim != 2 or data.shape[1] != self.dim:
+            raise ValueError("data must have shape (n_samples, dim)")
+
+        active = _iter_active_dims(X_values, data.shape[0], self.dim)
+        if not active:
+            return np.zeros(self.n_features, dtype=np.float64)
+
+        psi = self.evaluate_batch(data)
+        delta = np.zeros(self.n_features, dtype=np.float64)
+        for d, x_d in active:
+            dpsi = psi @ self.build_derivative_matrix(d)
+            delta += np.mean(dpsi.conj() * x_d[:, None], axis=0)
+        return delta
+
+    def delta_from_constant(
+        self, data: np.ndarray, X_const: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute Delta_i = (1/N) sum_t X_const · ∇psi_i^*(x_t)
+        for constant forcing X_const.
+        """
+        data = np.asarray(data)
+        X_const = np.asarray(X_const)
+        if data.ndim != 2 or data.shape[1] != self.dim:
+            raise ValueError("data must have shape (n_samples, dim)")
+        if X_const.ndim != 1 or X_const.shape[0] != self.dim:
+            raise ValueError("X_const must have shape (dim,)")
+
+        active_dims = np.where(X_const != 0)[0]
+        if active_dims.size == 0:
+            return np.zeros(self.n_features, dtype=np.float64)
+
+        psi = self.evaluate_batch(data)
+        delta = np.zeros(self.n_features, dtype=np.float64)
+        for d in active_dims:
+            dpsi = psi @ self.build_derivative_matrix(d)
+            delta += X_const[d] * np.mean(dpsi.conj(), axis=0)
+        return delta
 
     def get_decomposition_observables(self) -> Dict[str, np.ndarray]:
         """
@@ -371,14 +497,20 @@ class FourierDictionary(Dictionary):
         """
         Compute Delta_i = (1/N) sum_t X(x_t) · ∇psi_i^*(x_t)
         for Fourier dictionary basis functions.
+
+        X_values can be:
+        - ndarray (n_samples, dim)
+        - dict {dim_index: values}
+        - sequence length dim with arrays/scalars/None
         """
         data = np.asarray(data)
-        X_values = np.asarray(X_values)
 
         if data.ndim != 2 or data.shape[1] != self.dim:
             raise ValueError("data must have shape (n_samples, dim)")
-        if X_values.shape != data.shape:
-            raise ValueError("X_values must have the same shape as data")
+
+        active = _iter_active_dims(X_values, data.shape[0], self.dim)
+        if not active:
+            return np.zeros(self.n_features, dtype=np.complex128)
 
         phi = self.evaluate_batch(data)
         factors = self.derivative_factors()
@@ -387,10 +519,8 @@ class FourierDictionary(Dictionary):
         factors_conj = factors.conj()
 
         delta = np.zeros(self.n_features, dtype=np.complex128)
-        for d in range(self.dim):
-            delta += np.mean(
-                phi_conj * factors_conj[:, d] * X_values[:, d][:, None], axis=0
-            )
+        for d, x_d in active:
+            delta += np.mean(phi_conj * factors_conj[:, d] * x_d[:, None], axis=0)
 
         return delta
 

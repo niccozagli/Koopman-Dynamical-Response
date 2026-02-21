@@ -39,7 +39,7 @@ def _(NoisyLorenz63):
         tau=10,
         transient=1000.0,
     )
-    dt = t[1] - t[0]
+    dt = float( t[1] - t[0] )
     return X, dt
 
 
@@ -64,7 +64,7 @@ def _(ChebyshevDictionary, EDMD, X, dt, make_snapshots, minmax_scale):
 
     dictionary = ChebyshevDictionary(degree=15, dim=3)
     edmd = EDMD(dictionary=dictionary, dt_eff=dt_eff)
-    K = edmd.fit_snapshots(X_snap, Y_snap, batch_size=10000, show_progress=True)
+    K = edmd.fit_snapshots(X_snap, Y_snap, batch_size=20000, show_progress=True)
     return dictionary, edmd, scaled_data
 
 
@@ -112,7 +112,7 @@ def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, spectrum):
         eigenvalues=eigs_ct,
     )
     lags_obs, corr_obs = cross_correlation(observable,observable,dt=dt,normalization="biased",max_lag=10**4)
-    return corr_obs, koop_corr, lags_obs
+    return G_hat, corr_obs, koop_corr, lags_obs
 
 
 @app.cell
@@ -121,6 +121,50 @@ def _(corr_obs, koop_corr, lags_obs, np, plt):
     ax_corr_obs.plot(lags_obs, corr_obs)
     ax_corr_obs.plot(lags_obs, np.real(koop_corr(lags_obs)), ".",ms=3)
     ax_corr_obs.set_xlim((-1, 15))
+    plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Response functions
+    """)
+    return
+
+
+@app.cell
+def _(X, dictionary, scaled_data):
+    # Only dimension 1 (y) is active for this perturbation
+    perturbation ={
+        1 : X[:,0]
+    }
+    # Only dimension 1 is active
+    delta = dictionary.delta_from_trajectory(
+        data=scaled_data,
+        X_values=perturbation
+    )
+    return (delta,)
+
+
+@app.cell
+def _(G_hat, S_r, U_r, delta, eigs_ct, f_hat, np, spectrum):
+    c_hat_gamma = (np.diag(1/np.sqrt(S_r)) @ U_r.conj().T) @ delta
+    gamma = spectrum.left_eigvecs.conj().T @ c_hat_gamma
+    koop_resp = spectrum.correlation_function_continuous(
+        G=G_hat,
+        coeff_f=f_hat,
+        coeff_g=gamma,
+        eigenvalues=eigs_ct,
+    )
+    return (koop_resp,)
+
+
+@app.cell
+def _(koop_resp, lags_obs, plt):
+    fig_resp, ax_resp = plt.subplots()
+    ax_resp.plot(lags_obs, koop_resp(lags_obs).real)
+    ax_resp.set_xlim((-1, 15))
     plt.show()
     return
 
