@@ -6,11 +6,6 @@ import numpy as np
 from tqdm import tqdm
 
 from koopman_response.algorithms.dictionaries import Dictionary
-from koopman_response.algorithms.spectrum import KoopmanSpectrum
-from koopman_response.utils.koopman import (
-    Koopman_correlation_function,
-    get_spectral_properties,
-)
 
 
 class EDMD:
@@ -77,141 +72,9 @@ class EDMD:
         self.G = G
         self.A = A
         self.K = np.linalg.solve(G, A)
-        return self.K # type:ignore
-
-    def evaluate_dictionary(self, data: np.ndarray) -> np.ndarray:
-        return self.dictionary.evaluate_batch(data)
-
-    def evaluate_koopman_eigenfunctions(
-        self, data: np.ndarray, eigenvectors: np.ndarray
-    ) -> np.ndarray:
-        """
-        Evaluate Koopman eigenfunctions at data points.
-        """
-        psi = self.dictionary.evaluate_batch(data)
-        return psi @ eigenvectors
+        return self.K  # type:ignore
 
     def gram(self) -> np.ndarray:
         if self.G is None:
             raise ValueError("G is not set. Run fit_snapshots() first.")
         return self.G
-
-
-class Tikhonov:
-    def __init__(self, alpha: float = 1e-7):
-        self.alpha = alpha
-
-    def tikhonov(self, edmd: EDMD) -> np.ndarray:
-        if edmd.G is None or edmd.A is None:
-            raise ValueError("G and A are not set. Run fit_snapshots() first.")
-        eye = np.eye(edmd.G.shape[0], dtype=edmd.G.dtype)
-        return np.linalg.solve(edmd.G + self.alpha * eye, edmd.A)
-
-
-class TSVD:
-    def __init__(self, rel_threshold: float = 1e-6):
-        self.rel_threshold: float = rel_threshold
-        self.Ur: Optional[np.ndarray] = None
-        self.Sr: Optional[np.ndarray] = None
-        self.Kreduced: Optional[np.ndarray] = None
-        self.reduced_right_eigvecs: Optional[np.ndarray] = None
-        self.reduced_left_eigvecs: Optional[np.ndarray] = None
-        self.eigenvalues: Optional[np.ndarray] = None
-        self.Gr: Optional[np.ndarray] = None
-        self.lambdas: Optional[np.ndarray] = None
-        self.Gr_inv: Optional[np.ndarray] = None
-
-    def decompose(self, edmd: EDMD) -> np.ndarray:
-        if edmd.G is None or edmd.A is None:
-            raise ValueError("G and A are not set. Run fit_snapshots() first.")
-
-        U, S, Vt = np.linalg.svd(edmd.G, full_matrices=False)
-        r = np.sum(S > self.rel_threshold * S[0])
-        Ur = U[:, :r]
-        Sr_inv = np.diag(1 / S[:r])
-        K_reduced = Sr_inv @ (Ur.T.conj() @ edmd.A @ Ur)
-        Gr_inv = Ur @ Sr_inv @ Ur.T
-
-        self.Ur = Ur
-        self.Sr = S[:r]
-        self.Gr = np.diag(S[:r])
-        self.Kreduced = K_reduced
-        self.Gr_inv = Gr_inv
-        return K_reduced
-
-    def get_spectral_properties(self) -> None:
-        if self.Kreduced is None:
-            raise RuntimeError("You must call decompose() before spectral properties.")
-
-        eigenvalues, right_eigvecs, left_eigvecs = get_spectral_properties(self.Kreduced)
-        self.reduced_right_eigvecs = right_eigvecs
-        self.reduced_left_eigvecs = left_eigvecs
-        self.eigenvalues = eigenvalues
-
-    def find_continuous_time_eigenvalues(self, dt: float, tau: int = 1) -> None:
-        if self.eigenvalues is None:
-            return
-        self.lambdas = np.log(self.eigenvalues) / (dt * tau)
-
-    def project_reduced_space(self, dictionary_projections: np.ndarray) -> np.ndarray:
-        if self.Ur is None:
-            raise RuntimeError("You must call decompose() before mapping eigenvectors.")
-        return self.Ur.conj().T @ dictionary_projections
-
-
-class ProjectionKoopmanSpace:
-    def __init__(self, threshold_lambda: float = -2):
-        self.threshold: float = threshold_lambda
-        self.lambdas: Optional[np.ndarray] = None
-        self.Vn: Optional[np.ndarray] = None
-        self.Gn: Optional[np.ndarray] = None
-        self.Gr: Optional[np.ndarray] = None
-
-    def set_subspace(self, tsvd: TSVD) -> None:
-        if tsvd.lambdas is None or tsvd.reduced_right_eigvecs is None or tsvd.Gr is None:
-            raise RuntimeError(
-                "TSVD must be performed and continuous-time eigenvalues computed first."
-            )
-
-        lambdas = tsvd.lambdas
-        indx = np.where(np.real(lambdas) > self.threshold)[0]
-
-        lambdas_good = lambdas[indx]
-        Vn = tsvd.reduced_right_eigvecs[:, indx]
-        Gn = Vn.T.conj() @ tsvd.Gr @ Vn
-
-        self.lambdas = lambdas_good
-        self.Vn = Vn
-        self.Gn = Gn
-        self.Gr = tsvd.Gr
-
-    def project_to_koopman_space(self, reduced_svd_projections: np.ndarray) -> np.ndarray:
-        if self.Gn is None or self.Vn is None or self.Gr is None:
-            raise RuntimeError("You must call set_subspace() before mapping eigenvectors.")
-
-        return (
-            np.linalg.pinv(self.Gn)
-            @ self.Vn.conj().T
-            @ self.Gr
-            @ reduced_svd_projections
-        )
-
-    def reconstruct_correlation_function(
-        self, coefficients_f: np.ndarray, coefficients_g: np.ndarray
-    ):
-        if self.Gn is None:
-            raise RuntimeError("You must call set_subspace() before mapping eigenvectors.")
-
-        def koopman_reconstruction(t: float):
-            return Koopman_correlation_function(
-                t=t,
-                M=self.Gn,
-                alpha1=coefficients_f,
-                alpha2=coefficients_g,
-                eigenvalues=self.lambdas,
-            )
-
-        return koopman_reconstruction
-
-
-Projection_Koopman_Space = ProjectionKoopmanSpace

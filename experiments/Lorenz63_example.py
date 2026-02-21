@@ -151,13 +151,30 @@ def _(X, dictionary, scaled_data):
 def _(G_hat, S_r, U_r, delta, eigs_ct, f_hat, np, spectrum):
     c_hat_gamma = (np.diag(1/np.sqrt(S_r)) @ U_r.conj().T) @ delta
     gamma = spectrum.left_eigvecs.conj().T @ c_hat_gamma
+
+    cutoff = -1.5
+    mask = eigs_ct.real >= cutoff
+
+    f_hat_tr   = f_hat[mask]
+    gamma_tr   = gamma[mask]
+    eigs_ct_tr = eigs_ct[mask]
+    G_hat_tr   = G_hat[np.ix_(mask, mask)]
+
     koop_resp = spectrum.correlation_function_continuous(
-        G=G_hat,
-        coeff_f=f_hat,
-        coeff_g=gamma,
-        eigenvalues=eigs_ct,
+        G=G_hat_tr,
+        coeff_f=f_hat_tr,
+        coeff_g=gamma_tr,
+        eigenvalues=eigs_ct_tr,
     )
     return (koop_resp,)
+
+
+app._unparsable_cell(
+    r"""
+    np.
+    """,
+    name="_"
+)
 
 
 @app.cell
@@ -166,6 +183,11 @@ def _(koop_resp, lags_obs, plt):
     ax_resp.plot(lags_obs, koop_resp(lags_obs).real)
     ax_resp.set_xlim((-1, 15))
     plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 

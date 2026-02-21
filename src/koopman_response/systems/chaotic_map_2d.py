@@ -1,64 +1,55 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
 
 import numpy as np
-
-TWO_PI = 2 * np.pi
 
 
 @dataclass
 class NoisyChaoticMap2D:
     """
-    2D chaotic map:
+    2D chaotic map with optional additive noise:
 
-        [x_{n+1}, y_{n+1}]^T = [A (x_n, y_n)^T
-            + (1/pi) * zeta(x_n + y_n; mu) * (1, 1)^T
-            + sigma * eta] mod 1
+        x_{n+1}, y_{n+1} = [ A (x_n, y_n) + (1/pi) * zeta(x_n + y_n) * (1, 1)
+                            + sigma * eta_n ] mod 1
 
-    where A = [[2, 1], [1, 1]],
-    zeta(s) = arctan( |mu| sin(2π s - alpha) / (1 - |mu| cos(2π s - alpha)) ),
-    mu = |mu| e^{i alpha}, and eta ~ N(0, I).
+    where zeta(s) = arctan(|mu| sin(2π s - alpha) / (1 - |mu| cos(2π s - alpha)))
+    and eta_n is standard Gaussian noise in R^2.
     """
 
+    sigma: float = 0.0
     mu_abs: float = 0.88
     alpha: float = -2.4
-    sigma: float = 0.01
-    A: np.ndarray = field(default_factory=lambda: np.array([[2.0, 1.0], [1.0, 1.0]]))
+    zeta_scale: float = 1.0 / np.pi
+    A: np.ndarray = field(
+        default_factory=lambda: np.array([[2.0, 1.0], [1.0, 1.0]], dtype=float)
+    )
 
-    def zeta(self, s: np.ndarray) -> np.ndarray:
-        numerator = self.mu_abs * np.sin(TWO_PI * s - self.alpha)
-        denominator = 1.0 - self.mu_abs * np.cos(TWO_PI * s - self.alpha)
+    def _zeta(self, s: np.ndarray) -> np.ndarray:
+        angle = 2.0 * np.pi * s - self.alpha
+        numerator = self.mu_abs * np.sin(angle)
+        denominator = 1.0 - self.mu_abs * np.cos(angle)
         return np.arctan(numerator / denominator)
 
-    def step(self, xy: np.ndarray, rng: Optional[np.random.Generator] = None) -> np.ndarray:
-        xy = np.asarray(xy, dtype=float).reshape(2)
-        if rng is None:
-            rng = np.random.default_rng()
-
-        s = xy[0] + xy[1]
-        z = self.zeta(s)
-        noise = self.sigma * rng.normal(0.0, 1.0, size=2)
-
-        updated = self.A @ xy + (1.0 / np.pi) * z * np.ones(2) + noise
-        return np.mod(updated, 1.0)
+    def _step(self, state: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        s = state[0] + state[1]
+        zeta_val = self._zeta(s)
+        coupling = self.zeta_scale * zeta_val * np.array([1.0, 1.0])
+        noise = self.sigma * rng.standard_normal(2)
+        next_state = self.A @ state + coupling + noise
+        return np.mod(next_state, 1.0)
 
     def iterate(
-        self,
-        x0: Tuple[float, float],
-        n_steps: int,
-        rng: Optional[np.random.Generator] = None,
+        self, x0: float, y0: float, n_steps: int, seed: int | None = None
     ) -> np.ndarray:
+        """
+        Iterate the map for n_steps, returning an array of shape (n_steps + 1, 2).
+        """
         if n_steps < 1:
             raise ValueError("n_steps must be >= 1")
-        if rng is None:
-            rng = np.random.default_rng()
-
-        xs = np.empty((n_steps + 1, 2), dtype=float)
-        xs[0, :] = np.asarray(x0, dtype=float)
-        x = xs[0]
-        for i in range(1, n_steps + 1):
-            x = self.step(x, rng=rng)
-            xs[i, :] = x
-        return xs
+        rng = np.random.default_rng(seed)
+        traj = np.zeros((n_steps + 1, 2), dtype=float)
+        traj[0] = np.array([x0, y0], dtype=float)
+        for i in range(n_steps):
+            traj[i + 1] = self._step(traj[i], rng)
+        return traj

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Sequence, Tuple
 
 import numpy as np
-import statsmodels.api as sm
 from scipy.signal import correlate, correlation_lags
 
 

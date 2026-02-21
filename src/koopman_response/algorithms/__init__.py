@@ -5,7 +5,7 @@ from koopman_response.algorithms.dictionaries import (
     Dictionary,
     FourierDictionary,
 )
-from koopman_response.algorithms.edmd import EDMD, ProjectionKoopmanSpace, Tikhonov, TSVD
+from koopman_response.algorithms.edmd import EDMD
 from koopman_response.algorithms.regularization import TSVDRegularizer
 from koopman_response.algorithms.spectrum import KoopmanSpectrum
 
@@ -16,7 +16,4 @@ __all__ = [
     "EDMD",
     "TSVDRegularizer",
     "KoopmanSpectrum",
-    "ProjectionKoopmanSpace",
-    "Tikhonov",
-    "TSVD",
 ]
