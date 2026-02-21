@@ -12,6 +12,7 @@ dependencies = [
   "tqdm>=4.67.1,<5.0.0",
   "marimo",
   "numba",
+  "pyzmq>=27.1.0",
 ]
 
 [dependency-groups]

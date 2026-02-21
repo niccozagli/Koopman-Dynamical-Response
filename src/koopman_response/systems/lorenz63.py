@@ -1,6 +1,4 @@
-"""
-Lorenz 63 system (with additive noise parameter).
-"""
+"""Lorenz 63 system with additive noise."""
 
 from __future__ import annotations
 
@@ -33,7 +31,7 @@ def _integrate_em_lorenz(
     transient: float,
     y0: np.ndarray,
     seed: int,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     np.random.seed(seed)
 
     n_steps = int((tf - t0) / dt)
@@ -93,7 +91,7 @@ class NoisyLorenz63:
         self.beta = beta
         self.noise = noise
 
-        self.default_y0 = np.array([1.0, 0.5, 2.0])
+        self.default_y0 = np.array([1.0, 0.5, 2.0], dtype=float)
 
     def drift(self, t: float, y: np.ndarray) -> np.ndarray:
         _ = t
@@ -110,7 +108,7 @@ class NoisyLorenz63:
 
     def integrate_em_jit(
         self,
-        t_span: tuple[float, float] = (0.0, 10**6),
+        t_span: tuple[float, float] = (0.0, 1_000_000.0),
         dt: float = 0.001,
         tau: int = 100,
         transient: float = 500.0,
@@ -122,6 +120,12 @@ class NoisyLorenz63:
         """
         if not _NUMBA_AVAILABLE:
             raise ImportError("numba is required for integrate_em_jit")
+        if dt <= 0:
+            raise ValueError("dt must be positive")
+        if tau <= 0:
+            raise ValueError("tau must be a positive integer")
+        if t_span[1] <= t_span[0]:
+            raise ValueError("t_span must satisfy t_span[1] > t_span[0]")
         if y0 is None:
             y0 = self.default_y0
         y0 = np.asarray(y0, dtype=float)
