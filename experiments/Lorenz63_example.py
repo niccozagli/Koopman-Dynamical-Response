@@ -6,6 +6,7 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
     from koopman_response import KoopmanSpectrum
@@ -25,6 +26,7 @@ def _():
         cross_correlation,
         make_snapshots,
         minmax_scale,
+        mo,
         np,
         plt,
     )
@@ -295,7 +297,7 @@ def _(K_r, KoopmanSpectrum, dictionary, edmd, plt):
     ax_eigs.set_xlabel(r"$\mathbf{Re}\lambda_k$",size=16)
     ax_eigs.set_ylabel(r"$\mathbf{Im}\lambda_k$",size=16)
     ax_eigs.grid(alpha=0.4)
-    ax_eigs.set_title("Eigenvalues Generator")
+    ax_eigs.set_title("Eigenvalues Koopman Generator")
     plt.xlim(-1.5,0.2)
     plt.ylim(-20,20)
     plt.tight_layout()
@@ -390,13 +392,15 @@ def _(mo):
     mo.md(r"""
     ### Response functions
 
-    We now compute the linear response of the observable $f$ to a perturbation field
-    $X(x(t))$. The key coefficients are
+    The Green's function $G_f$ can be written, using the fluctuation dissipation theorem, as a correlation function
+    $
+    G_f(t) = C_{f\Gamma}(t)
+    $
+    between the observable $f$ and the response observable $\Gamma = \frac{-\nabla\cdot (\mathbf{X}(\mathbf{x} \rho_0))}{\rho_0}$ where $\mathbf{X}(\mathbf{x})$ is the applied perturbation in the phase space. Perturbation of the parameter $\rho$ can be written using the perturbation $\mathbf{X}(\mathbf{x}) = (0,x,0)$.
+
+    It is possible to find the decomposition of the response observable onto the orthonormal basis $\hat{\psi}$ by first evaluating the coefficients
     $$
-    \Delta_i
-    =
-    \left\langle X\cdot\nabla\psi_i^*, 1 \right\rangle_{\rho_0}
-    \approx
+    \Delta_i =
     \frac{1}{M}\sum_{n=0}^{M-1}
     X(x_n)\cdot\nabla\psi_i^*(x_n).
     $$
@@ -408,20 +412,28 @@ def _(mo):
     \gamma = \Xi^\dagger \hat\Delta.
     $$
 
-    The response function for $f$ is
+    The approximation of the response observable onto Koopman eigenfunctions is
     $$
-    R_f(t)
-    =
-    \gamma^\dagger \, G_\phi \, (\mathbf{a} \odot e^{\lambda t}),
+    \Gamma(x) = \sum_k \gamma_k \phi_k(x)
     $$
-    which is evaluated below by reusing the same Koopman correlation expression
-    with coefficients $(\mathbf{a}, \gamma)$.
     """)
     return
 
 
 @app.cell
-def _(dictionary, scaled_data):
+def _(
+    G_hat,
+    S_r,
+    U_r,
+    dictionary,
+    eigs_ct,
+    f_hat,
+    lags_obs,
+    np,
+    plt,
+    scaled_data,
+    spectrum,
+):
     # Only dimension 1 (y) is active for this perturbation
     perturbation ={
         1 : scaled_data[:,0]
@@ -431,11 +443,7 @@ def _(dictionary, scaled_data):
         data=scaled_data,
         X_values=perturbation
     )
-    return (delta,)
 
-
-@app.cell
-def _(G_hat, S_r, U_r, delta, eigs_ct, f_hat, np, spectrum):
     c_hat_gamma = (np.diag(1/np.sqrt(S_r)) @ U_r.conj().T) @ delta
     gamma = spectrum.left_eigvecs.conj().T @ c_hat_gamma
 
@@ -446,14 +454,12 @@ def _(G_hat, S_r, U_r, delta, eigs_ct, f_hat, np, spectrum):
         coeff_g=gamma,
         eigenvalues=eigs_ct,
     )
-    return (koop_resp,)
 
-
-@app.cell
-def _(koop_resp, lags_obs, plt):
     fig_resp, ax_resp = plt.subplots()
     ax_resp.plot(lags_obs, koop_resp(lags_obs).real)
     ax_resp.set_xlim((-1, 15))
+    ax_resp.set_xlabel(r"$t$",size=16)
+    ax_resp.set_ylabel(r"$G_f(t)$",size=16)
     plt.show()
     return
 
