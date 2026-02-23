@@ -34,9 +34,9 @@ class EDMD:
         batch_size: int = 10_000,
         show_progress: bool = True,
         fit_dictionary: bool = True,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Fit EDMD on snapshot pairs (X, Y).
+        Fit EDMD on snapshot pairs (X, Y) and compute Gram matrices.
         """
         if X.shape != Y.shape:
             raise ValueError("X and Y must have the same shape")
@@ -71,8 +71,34 @@ class EDMD:
 
         self.G = G
         self.A = A
-        self.K = np.linalg.solve(G, A)
-        return self.K  # type:ignore
+        self.K = None
+        return G, A
+
+    def solve_koopman(
+        self,
+        reg: float = 0.0,
+        use_pinv: bool = False,
+    ) -> np.ndarray:
+        """
+        Solve for the Koopman matrix K given stored G and A.
+        """
+        if self.G is None or self.A is None:
+            raise ValueError("G and A are not set. Run fit_snapshots() first.")
+        if reg < 0:
+            raise ValueError("reg must be non-negative")
+
+        G = self.G
+        A = self.A
+        if reg > 0.0:
+            G = G + reg * np.eye(G.shape[0], dtype=G.dtype)
+
+        if use_pinv:
+            K = np.linalg.pinv(G) @ A
+        else:
+            K = np.linalg.solve(G, A)
+
+        self.K = K
+        return K
 
     def gram(self) -> np.ndarray:
         if self.G is None:

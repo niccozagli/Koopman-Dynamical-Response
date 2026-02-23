@@ -9,7 +9,7 @@ def _():
     import marimo as mo
     import numpy as np
     import matplotlib.pyplot as plt
-    from koopman_response import KoopmanSpectrum
+    from koopman_response import KoopmanSpectrumEDMD
     from koopman_response.algorithms.edmd import EDMD
     from koopman_response.algorithms.dictionaries import ChebyshevDictionary
     from koopman_response.algorithms.regularization import TSVDRegularizer
@@ -20,7 +20,7 @@ def _():
     return (
         ChebyshevDictionary,
         EDMD,
-        KoopmanSpectrum,
+        KoopmanSpectrumEDMD,
         NoisyLorenz63,
         TSVDRegularizer,
         cross_correlation,
@@ -37,7 +37,7 @@ def _(mo):
     mo.md(r"""
     # Response properties to perturbations of Lorenz63
 
-    In this notebook, we evaluate in a pure data-driven way how perturbations affect the chaotic Lorenz 63 model.
+    In this notebook, we evaluate in a purely data-driven way how perturbations affect the chaotic Lorenz 63 model.
 
 
     In particular, we consider the following equations
@@ -169,8 +169,7 @@ def _(X, dt, make_snapshots, minmax_scale):
     )
 
     lag = 10
-    dt_eff = dt * lag
-    X_snap, Y_snap = make_snapshots(scaled_data, lag=lag)
+    X_snap, Y_snap, dt_eff = make_snapshots(scaled_data, lag=lag, dt=dt)
     return X_snap, Y_snap, dt_eff, scaled_data
 
 
@@ -222,7 +221,7 @@ def _(mo):
 def _(ChebyshevDictionary, EDMD, X_snap, Y_snap, dt_eff):
     dictionary = ChebyshevDictionary(degree=15, dim=3)
     edmd = EDMD(dictionary=dictionary, dt_eff=dt_eff)
-    K = edmd.fit_snapshots(X_snap, Y_snap, batch_size=20000, show_progress=True)
+    _ = edmd.fit_snapshots(X_snap, Y_snap, batch_size=20000, show_progress=True)
     return dictionary, edmd
 
 
@@ -288,8 +287,8 @@ def _(mo):
 
 
 @app.cell
-def _(K_r, KoopmanSpectrum, dictionary, edmd, plt):
-    spectrum = KoopmanSpectrum.from_koopman_matrix(K_r,dictionary)
+def _(K_r, KoopmanSpectrumEDMD, dictionary, edmd, plt):
+    spectrum = KoopmanSpectrumEDMD.from_koopman_matrix(K_r,dictionary)
     eigs_ct = spectrum.continuous_time_eigenvalues(dt_eff=edmd.dt_eff)
 
     fig_eigs, ax_eigs = plt.subplots(figsize=(4, 4))

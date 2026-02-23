@@ -12,7 +12,7 @@ def _():
     from koopman_response.systems.chaotic_map import ChaoticMap1D
     from koopman_response.algorithms.edmd import EDMD
     from koopman_response.algorithms.dictionaries import FourierDictionary
-    from koopman_response.algorithms.spectrum import KoopmanSpectrum
+    from koopman_response.algorithms.spectrum import KoopmanSpectrumEDMD
     from koopman_response.utils.preprocessing import make_snapshots
     from koopman_response.utils.signal import cross_correlation 
 
@@ -20,7 +20,7 @@ def _():
         ChaoticMap1D,
         EDMD,
         FourierDictionary,
-        KoopmanSpectrum,
+        KoopmanSpectrumEDMD,
         cross_correlation,
         make_snapshots,
         np,
@@ -76,7 +76,7 @@ def _(xs):
 def _(
     EDMD,
     FourierDictionary,
-    KoopmanSpectrum,
+    KoopmanSpectrumEDMD,
     data_map,
     flight_time,
     make_snapshots,
@@ -85,9 +85,10 @@ def _(
 ):
     dictionary = FourierDictionary(order=order, dim=1, L=2 * np.pi, include_constant=True)
     edmd = EDMD(dictionary=dictionary)
-    X_snap, Y_snap = make_snapshots(data_map, lag=flight_time)
-    K = edmd.fit_snapshots(X=X_snap, Y=Y_snap, batch_size=20000, show_progress=True)
-    spectrum = KoopmanSpectrum.from_koopman_matrix(K, dictionary)
+    X_snap, Y_snap, _ = make_snapshots(data_map, lag=flight_time)
+    edmd.fit_snapshots(X=X_snap, Y=Y_snap, batch_size=20000, show_progress=True)
+    K = edmd.solve_koopman()
+    spectrum = KoopmanSpectrumEDMD.from_koopman_matrix(K, dictionary)
     koop_gram_matrix = spectrum.eigenfunction_inner_product(edmd.gram())
     return dictionary, edmd, koop_gram_matrix, spectrum
 
