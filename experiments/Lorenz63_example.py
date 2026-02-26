@@ -493,7 +493,7 @@ def _(dt, make_snapshots, np, scaled_data):
 @app.cell
 def _(KernelDMD, PolynomialKernel, X_snap_kdmd, Y_snap_kdmd, np):
     d = np.linalg.norm(X_snap_kdmd, axis=1).mean()
-    kdmd = KernelDMD(kernel=PolynomialKernel(degree=15,coef0=1,gamma=1/d))
+    kdmd = KernelDMD(kernel=PolynomialKernel(degree=14,coef0=1,gamma=1/d))
     _ = kdmd.fit_snapshots(X=X_snap_kdmd,Y=Y_snap_kdmd)
     return (kdmd,)
 
@@ -515,7 +515,7 @@ def _(plt, tsvd_kdmd):
 def _(kdmd, tsvd_kdmd):
     K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
         kdmd.A,
-        rel_threshold=1e-9
+        rel_threshold=4e-10
     )
     return (K_r_kdmd,)
 
