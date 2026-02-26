@@ -22,24 +22,86 @@ class TSVDRegularizer:
     Ur: Optional[np.ndarray] = None
     Sr: Optional[np.ndarray] = None
     Kr: Optional[np.ndarray] = None
+    U: Optional[np.ndarray] = None
+    S: Optional[np.ndarray] = None
 
-    def solve(self, G: np.ndarray, A: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def factorize(
+        self,
+        G: np.ndarray,
+        method: str = "eigh",
+        symmetrize: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Factorize the Gram matrix once and cache the result.
+
+        Parameters:
+            G: Gram matrix (square).
+            method: "eigh" (symmetric eigendecomposition) or "svd".
+            symmetrize: if True, use (G + G^*) / 2 before eigh.
+        """
         if G.shape[0] != G.shape[1]:
             raise ValueError("G must be square")
-        if A.shape != G.shape:
-            raise ValueError("A must have the same shape as G")
 
-        U, S, Vh = np.linalg.svd(G, full_matrices=False)
-        if self.rank is not None:
-            r = int(self.rank)
+        if method == "eigh":
+            G_use = 0.5 * (G + G.conj().T) if symmetrize else G
+            S, U = np.linalg.eigh(G_use)
+            idx = np.argsort(S)[::-1]
+            S = S[idx]
+            U = U[:, idx]
+            S = np.maximum(S, 0.0)
+        elif method == "svd":
+            U, S, _ = np.linalg.svd(G, full_matrices=False)
         else:
-            r = int(np.sum(S > self.rel_threshold * S[0]))
+            raise ValueError("method must be 'eigh' or 'svd'")
+
+        self.U = U
+        self.S = S
+        return U, S
+
+    def _truncate(
+        self,
+        rel_threshold: Optional[float],
+        rank: Optional[int],
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if self.U is None or self.S is None:
+            raise ValueError("Gram factorization missing. Call factorize() first.")
+
+        rel_val = self.rel_threshold if rel_threshold is None else float(rel_threshold)
+        rank_val = self.rank if rank is None else rank
+        if rank_val is not None:
+            r = int(rank_val)
+        else:
+            if self.S.size == 0:
+                raise ValueError("Empty spectrum; cannot truncate.")
+            if self.S[0] <= 0:
+                raise ValueError("Largest eigenvalue is non-positive; cannot truncate.")
+            r = int(np.sum(self.S > rel_val * self.S[0]))
         if r < 1:
             raise ValueError("Truncation rank is < 1. Increase rel_threshold or rank.")
 
-        Ur = U[:, :r]
-        Sr = S[:r]
+        Ur = self.U[:, :r]
+        Sr = self.S[:r]
+        return Ur, Sr
 
+    def solve_from_factorization(
+        self,
+        A: np.ndarray,
+        rel_threshold: Optional[float] = None,
+        rank: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if A.shape[0] != A.shape[1]:
+            raise ValueError("A must be square")
+        if self.U is None or self.S is None:
+            raise ValueError("Gram factorization missing. Call factorize() first.")
+        if A.shape[0] != self.U.shape[0]:
+            raise ValueError("A must have the same shape as the Gram factorization.")
+
+        if rel_threshold is not None:
+            self.rel_threshold = float(rel_threshold)
+        if rank is not None:
+            self.rank = int(rank)
+
+        Ur, Sr = self._truncate(rel_threshold, rank)
         Sr_inv_sqrt = np.diag(1.0 / np.sqrt(Sr))
         Kr = Sr_inv_sqrt @ (Ur.conj().T @ A @ Ur) @ Sr_inv_sqrt
 

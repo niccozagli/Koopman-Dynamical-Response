@@ -49,7 +49,7 @@ def _(mo):
 
 @app.cell
 def _(NoisyLorenz96):
-    lorenz = NoisyLorenz96(n_state=40, forcing=8.0, noise=2)
+    lorenz = NoisyLorenz96(n_state=20, forcing=8.0, noise=2.5)
     t, X = lorenz.integrate_em_jit(
         t_span=(0.0, 10_000.0),
         dt=0.001,
@@ -60,13 +60,15 @@ def _(NoisyLorenz96):
 
     momentum = X.mean(axis=1)
     energy = (X**2).mean(axis=1)
-    return X, dt, energy
+    return X, dt, momentum
 
 
 @app.cell
-def _(cross_correlation, dt, energy, plt):
-    lags , cf = cross_correlation(energy,energy,dt,max_lag=1000,normalization="biased")
+def _(cross_correlation, dt, momentum, plt):
+    lags , cf = cross_correlation(momentum,momentum,dt,max_lag=1000,normalization="biased")
     plt.plot(lags,cf)
+    plt.xlim((-0.2,5))
+    plt.show()
     return
 
 
@@ -78,9 +80,9 @@ def _(X, standardize_global):
 
 @app.cell
 def _(dt, make_snapshots, np, scaled_data):
-    X_snap , Y_snap, dt_eff = make_snapshots(scaled_data, stride= 100, lag=1, dt=dt)
+    X_snap , Y_snap, dt_eff = make_snapshots(scaled_data, stride= 10, lag=5, dt=dt)
 
-    n_snapshots_training = 3000
+    n_snapshots_training = 5000
     idx = np.random.choice(X_snap.shape[0], size=n_snapshots_training, replace=False)
     X_snap = X_snap[idx]
     Y_snap = Y_snap[idx]
@@ -96,10 +98,60 @@ def _(GaussianKernel, KernelDMD, X_snap, Y_snap):
 
 
 @app.cell
+def _(mo):
+    mo.md(r"""
+    ### Factorisation of Gram matrix in RKHS
+    """)
+    return
+
+
+@app.cell
 def _(TSVDRegularizer, kdmd):
-    tsvd = TSVDRegularizer(rel_threshold=9e-3)
-    K_r, U_r, S_r = tsvd.solve(kdmd.G, kdmd.A)
-    return K_r, tsvd
+    tsvd = TSVDRegularizer()
+    _ = tsvd.factorize(kdmd.G, method="eigh")
+    return (tsvd,)
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(plt, tsvd):
+    fig_sv , ax_sv = plt.subplots()
+    ax_sv.plot(tsvd.S / tsvd.S[0],'.')
+    ax_sv.set_yscale("log")
+    plt.show()
+    return
+
+
+@app.cell
+def _(tsvd):
+    check = tsvd.U.T @ tsvd.U  
+
+    return
+
+
+@app.cell
+def _(kdmd, tsvd):
+    K_r, U_r, S_r = tsvd.solve_from_factorization(kdmd.A, rel_threshold=1e-4)
+    return (K_r,)
 
 
 @app.cell
@@ -113,32 +165,35 @@ def _(K_r, KoopmanSpectrumKDMD, dt_eff, kdmd, plt):
     ax.set_title("KDMD Spectrum (Reduced Koopman)")
     ax.grid(alpha=0.3)
     plt.tight_layout()
+    plt.xlim((-3,0.1))
     plt.show()
     return (spectrum,)
 
 
 @app.cell
+def _(np, spectrum, tsvd):
+    C = tsvd.Ur * 1/np.sqrt(tsvd.Sr) @ spectrum.right_eigvecs
+    return
+
+
+@app.cell
 def _(X_snap, kdmd, scaled_data, spectrum, tsvd):
-    G_phi = spectrum.estimate_eigenfunction_inner_product(
-        scaled_data,
-        batch_size=5_000,
+    G_phi = spectrum.inner_product_inv_measure(
+        scaled_data[::10],
+        batch_size=10_000,
         kernel=kdmd.kernel,              # optional if stored in spectrum
         reference_data=X_snap,       # optional if stored
         U_r=tsvd.Ur, 
         S_r=tsvd.Sr,            # optional if stored
     )
-
     return
 
 
-app._unparsable_cell(
-    r"""
-    inner = (.conj().T @ f_vals) / data.shape[0]  # <phi, f>
-    coeffs = np.linalg.pinv(G_phi) @ inner
-
-    """,
-    name="_"
-)
+@app.cell
+def _():
+    # inner = (.conj().T @ f_vals) / data.shape[0]  # <phi, f>
+    # coeffs = np.linalg.pinv(G_phi) @ inner
+    return
 
 
 @app.cell

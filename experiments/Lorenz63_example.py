@@ -75,7 +75,7 @@ def _(mo):
 def _(NoisyLorenz63):
     lorenz = NoisyLorenz63()
     t, X = lorenz.integrate_em_jit(
-        t_span=(0.0, 10_000),
+        t_span=(0.0, 1000 + 2*1_000),
         dt=0.001,
         tau=10,
         transient=1000.0,
@@ -94,7 +94,7 @@ def _(X, cross_correlation, dt, plt, t):
     ax_cf[0].plot(t,signal)
     ax_cf[1].plot(lags,cf)
 
-    ax_cf[0].set_xlim((5500,5550))
+    ax_cf[0].set_xlim()
     ax_cf[0].set_xlabel(r"$t$",size=20)
     ax_cf[1].set_xlabel(r"$t$",size=20)
     ax_cf[0].set_ylabel(r"$z(t)$",size=20)
@@ -230,11 +230,11 @@ def _(mo):
     mo.md(r"""
     ### 5. Orthonormalisation and truncation
 
-    To improve numerical stability, we perform a singular value decomposition of the Gram matrix
+    To improve numerical stability, we perform an eigendecomposition of the (symmetric) Gram matrix
     $$
     G = U\,\Sigma\,U^\dagger.
     $$
-    We retain only the $r$ largest singular values, obtaining $U_r$ and $\Sigma_r$, and define the orthonormalised dictionary
+    We retain only the $r$ largest eigenvalues, obtaining $U_r$ and $\Sigma_r$, and define the orthonormalised dictionary
     $
     \hat{\psi}(\tilde x) = \psi(\tilde x) U_r  \Sigma_r^{-1/2}.
     $
@@ -259,7 +259,8 @@ def _(mo):
 @app.cell
 def _(TSVDRegularizer, edmd):
     tsvd = TSVDRegularizer(rel_threshold=1e-4)
-    K_r, U_r, S_r = tsvd.solve(edmd.G, edmd.A)
+    _ = tsvd.factorize(edmd.G, method="eigh")
+    K_r, U_r, S_r = tsvd.solve_from_factorization(edmd.A)
     return K_r, S_r, U_r
 
 
@@ -383,7 +384,7 @@ def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, plt, spectrum):
     ax_corr_obs.set_ylabel(r"$C_z(t)$",size=16)
     ax_corr_obs.legend()
     plt.show()
-    return G_hat, lags_obs
+    return G_hat, corr_obs, lags_obs
 
 
 @app.cell
@@ -460,6 +461,155 @@ def _(
     ax_resp.set_xlabel(r"$t$",size=16)
     ax_resp.set_ylabel(r"$G_f(t)$",size=16)
     plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### KDMD
+    """)
+    return
+
+
+@app.cell
+def _():
+    from koopman_response.algorithms import KernelDMD , PolynomialKernel
+    from koopman_response import KoopmanSpectrumKDMD
+
+    return KernelDMD, KoopmanSpectrumKDMD, PolynomialKernel
+
+
+@app.cell
+def _(dt, make_snapshots, np, scaled_data):
+    X_snap_kdmd , Y_snap_kdmd, dt_eff_kdmd = make_snapshots(scaled_data,stride=10, lag=1, dt=dt)
+    n_snapshots_training =  10_000
+    idx = np.random.choice(X_snap_kdmd.shape[0], size=n_snapshots_training, replace=False)
+    X_snap_kdmd = X_snap_kdmd[idx]
+    Y_snap_kdmd = Y_snap_kdmd[idx]
+    return X_snap_kdmd, Y_snap_kdmd
+
+
+@app.cell
+def _(KernelDMD, PolynomialKernel, X_snap_kdmd, Y_snap_kdmd, np):
+    d = np.linalg.norm(X_snap_kdmd, axis=1).mean()
+    kdmd = KernelDMD(kernel=PolynomialKernel(degree=15,coef0=1,gamma=1/d))
+    _ = kdmd.fit_snapshots(X=X_snap_kdmd,Y=Y_snap_kdmd)
+    return (kdmd,)
+
+
+@app.cell
+def _(TSVDRegularizer, kdmd):
+    tsvd_kdmd = TSVDRegularizer()
+    _ = tsvd_kdmd.factorize(kdmd.G, method="eigh")
+    return (tsvd_kdmd,)
+
+
+@app.cell
+def _(plt, tsvd_kdmd):
+    plt.semilogy(tsvd_kdmd.S)
+    return
+
+
+@app.cell
+def _(kdmd, tsvd_kdmd):
+    K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
+        kdmd.A,
+        rel_threshold=1e-9
+    )
+    return (K_r_kdmd,)
+
+
+@app.cell
+def _(K_r_kdmd, KoopmanSpectrumKDMD, dt_eff, eigs_ct, kdmd, plt):
+    spectrum_kdmd = KoopmanSpectrumKDMD.from_koopman_matrix(K_r_kdmd,kernel=kdmd.kernel)
+    eigs_ct_kdmd = spectrum_kdmd.continuous_time_eigenvalues(dt_eff)
+    fig, ax = plt.subplots(figsize=(4, 4))
+    ax.plot(eigs_ct_kdmd.real, eigs_ct_kdmd.imag, ".", ms=6)
+    ax.plot(eigs_ct.real, eigs_ct.imag, "x", ms=6)
+    ax.set_xlabel(r"$\mathrm{Re} \lambda$")
+    ax.set_ylabel(r"$\mathrm{Im} \lambda$")
+    ax.set_title("KDMD Spectrum (Reduced Koopman)")
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.xlim((-1.5,0.1))
+    plt.show()
+    return eigs_ct_kdmd, spectrum_kdmd
+
+
+@app.cell
+def _(X_snap_kdmd, np, spectrum_kdmd, tsvd_kdmd):
+    observable_kdmd = X_snap_kdmd[:,2]
+    koopman_modes = spectrum_kdmd.left_eigvecs.conj().T @ np.diag(1.0 / np.sqrt(tsvd_kdmd.Sr)) @ tsvd_kdmd.Ur.conj().T @ observable_kdmd
+
+    Phi = tsvd_kdmd.Ur @ np.diag(np.sqrt(tsvd_kdmd.Sr)) @ spectrum_kdmd.right_eigvecs
+    scalar_product_phi = Phi.conj().T @ Phi / Phi.shape[0]
+    return koopman_modes, scalar_product_phi
+
+
+@app.cell
+def _(np):
+    def correlation_function_continuous_gphi(
+        G_phi: np.ndarray,
+        coeff_f: np.ndarray,
+        coeff_g: np.ndarray,
+        eigenvalues: np.ndarray,
+    ):
+        """
+        Return a callable C_fg(t) using Koopman eigenfunctions (continuous time):
+
+            C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
+        """
+        coeff_f = np.asarray(coeff_f).reshape(-1)
+        coeff_g = np.asarray(coeff_g).reshape(-1)
+        eigs = np.asarray(eigenvalues).reshape(-1)
+
+        # drop the static mode
+        coeff_f = coeff_f[1:]
+        coeff_g = coeff_g[1:]
+        eigs = eigs[1:]
+        G_use = G_phi[1:, 1:]
+        row = coeff_g.conj() @ G_use
+
+        def _corr(t):
+            if np.isscalar(t):
+                return row @ (coeff_f * np.exp(t * eigs))
+            t_arr = np.asarray(t)
+            exp_t = np.exp(np.outer(t_arr, eigs))
+            return (exp_t * coeff_f[None, :]) @ row
+
+        return _corr
+
+    return (correlation_function_continuous_gphi,)
+
+
+@app.cell
+def _(
+    corr_obs,
+    correlation_function_continuous_gphi,
+    eigs_ct_kdmd,
+    koopman_modes,
+    lags_obs,
+    plt,
+    scalar_product_phi,
+):
+    cf_kdmd = correlation_function_continuous_gphi(
+        G_phi=scalar_product_phi,
+        coeff_f=koopman_modes,
+        coeff_g=koopman_modes,
+        eigenvalues=eigs_ct_kdmd
+    )
+
+    fig_final, ax_final = plt.subplots()
+    ax_final.plot(lags_obs, corr_obs)
+    ax_final.set_xlim((-1,30))
+    ax_final.plot(lags_obs,cf_kdmd(lags_obs).real)
+    plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 from tqdm import tqdm
@@ -33,6 +33,20 @@ def _kernel_matrix(
     return K
 
 
+def _iter_trajectory_segments(trajectories: np.ndarray | Sequence[np.ndarray]):
+    if isinstance(trajectories, np.ndarray):
+        if trajectories.ndim == 2:
+            yield trajectories
+            return
+        if trajectories.ndim == 3:
+            for i in range(trajectories.shape[0]):
+                yield trajectories[i]
+            return
+        raise ValueError("trajectories must be a 2D or 3D array")
+    for segment in trajectories:
+        yield segment
+
+
 class KernelDMD:
     """
     Kernel Dynamic Mode Decomposition (KDMD).
@@ -57,6 +71,7 @@ class KernelDMD:
         self.G: Optional[np.ndarray] = None
         self.A: Optional[np.ndarray] = None
         self.K: Optional[np.ndarray] = None
+        self.reference_data: Optional[np.ndarray] = None
 
     def fit_snapshots(
         self,
@@ -81,16 +96,16 @@ class KernelDMD:
         if fit_kernel:
             self.kernel.fit(X)
 
-        n_samples = X.shape[0]
         Kxx = _kernel_matrix(self.kernel, X, X, batch_size, show_progress)
         Kyx = _kernel_matrix(self.kernel, Y, X, batch_size, show_progress)
 
-        G = Kxx / n_samples
-        A = Kyx / n_samples
+        G = Kxx
+        A = Kyx
 
         self.G = G
         self.A = A
         self.K = None
+        self.reference_data = X
         return G, A
 
     def solve_koopman(
@@ -126,3 +141,51 @@ class KernelDMD:
         if self.G is None:
             raise ValueError("G is not set. Run fit_snapshots() first.")
         return self.G
+
+    def kernel_inner_product_inv_measure(
+        self,
+        trajectories: np.ndarray | Sequence[np.ndarray],
+        reference_data: np.ndarray | None = None,
+        batch_size: int = 5_000,
+        show_progress: bool = True,
+    ) -> np.ndarray:
+        """
+        Estimate the invariant-measure inner product of kernel functions:
+
+            (G_kernel)_{ij} = (1/M) sum_k k(x_k, x_i)^* k(x_k, x_j)
+
+        where x_k are samples from the invariant measure and x_i are reference points.
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+
+        ref = self.reference_data if reference_data is None else reference_data
+        if ref is None:
+            raise ValueError("reference_data must be provided or set by fit_snapshots()")
+        ref_arr = np.asarray(ref, dtype=float)
+        if ref_arr.ndim != 2:
+            raise ValueError("reference_data must be a 2D array")
+
+        G = None
+        n_total = 0
+        segments = _iter_trajectory_segments(trajectories)
+
+        for segment in segments:
+            seg_arr = np.asarray(segment, dtype=float)
+            if seg_arr.ndim != 2:
+                raise ValueError("each trajectory segment must be a 2D array")
+            n_samples = seg_arr.shape[0]
+            iterator = range(0, n_samples, batch_size)
+            for start in tqdm(iterator, disable=not show_progress):
+                end = min(start + batch_size, n_samples)
+                K_eval = self.kernel(seg_arr[start:end], ref_arr)
+                if G is None:
+                    n_ref = K_eval.shape[1]
+                    G = np.zeros((n_ref, n_ref), dtype=K_eval.dtype)
+                G += K_eval.conj().T @ K_eval
+                n_total += K_eval.shape[0]
+
+        if G is None or n_total == 0:
+            raise ValueError("no samples provided in trajectories")
+        G /= n_total
+        return G

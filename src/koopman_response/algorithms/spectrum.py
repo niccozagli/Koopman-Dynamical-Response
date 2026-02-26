@@ -168,6 +168,44 @@ class KoopmanSpectrumEDMD:
 
         return _corr
 
+    def correlation_function_continuous(
+        self,
+        G: np.ndarray,
+        coeff_f: np.ndarray,
+        coeff_g: np.ndarray,
+        eigenvalues: np.ndarray | None = None,
+    ):
+        """
+        Return a callable C_fg(t) using Koopman eigenfunctions (continuous time):
+
+            C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
+
+        where G_phi = Xi^* G Xi and lambda are continuous-time eigenvalues used in
+        the exponential. If eigenvalues is None, self.eigenvalues are used.
+        """
+        eigs = self.eigenvalues if eigenvalues is None else eigenvalues
+        G_phi = self.eigenfunction_inner_product(G)
+
+        coeff_f = np.asarray(coeff_f).reshape(-1)
+        coeff_g = np.asarray(coeff_g).reshape(-1)
+        eigs = np.asarray(eigs).reshape(-1)
+
+        # drop the static mode
+        coeff_f = coeff_f[1:]
+        coeff_g = coeff_g[1:]
+        eigs = eigs[1:]
+        G_phi = G_phi[1:, 1:]
+        row = coeff_g.conj() @ G_phi
+
+        def _corr(t):
+            if np.isscalar(t):
+                return row @ (coeff_f * np.exp(t * eigs))
+            t_arr = np.asarray(t)
+            exp_t = np.exp(np.outer(t_arr, eigs))
+            return (exp_t * coeff_f[None, :]) @ row
+
+        return _corr
+
 
 @dataclass
 class KoopmanSpectrumKDMD:
@@ -241,7 +279,7 @@ class KoopmanSpectrumKDMD:
         """
         return self.right_eigvecs.conj().T @ G @ self.right_eigvecs
 
-    def estimate_eigenfunction_inner_product(
+    def inner_product_inv_measure(
         self,
         trajectories: np.ndarray | Sequence[np.ndarray],
         kernel: Kernel | None = None,
@@ -258,6 +296,10 @@ class KoopmanSpectrumKDMD:
             - array of shape (n_samples, dim)
             - array of shape (n_segments, n_samples, dim)
             - sequence of arrays with shape (n_samples, dim)
+
+        This computes C^* G0 C without explicitly forming G0, where
+        C = U_r S_r^{-1/2} V are the kernel expansion coefficients and
+        (G0)_{lr} = (1/M) sum_k k(x_k, x_l)^* k(x_k, x_r).
         """
         if batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
@@ -266,7 +308,10 @@ class KoopmanSpectrumKDMD:
             kernel, reference_data, U_r, S_r
         )
         inv_sqrt = 1.0 / np.sqrt(S_r_val)
-        basis = U_r_val * inv_sqrt[None, :]
+        transform = U_r_val * inv_sqrt[None, :]
+        if self.right_eigvecs.shape[0] != transform.shape[1]:
+            raise ValueError("right_eigvecs must match reduced dimension")
+        coeffs = transform @ self.right_eigvecs
 
         G = None
         n_total = 0
@@ -280,7 +325,7 @@ class KoopmanSpectrumKDMD:
             iterator = range(0, n_samples, batch_size)
             for start in tqdm(iterator, disable=not show_progress):
                 end = min(start + batch_size, n_samples)
-                phi = kernel_val(seg_arr[start:end], ref) @ basis
+                phi = kernel_val(seg_arr[start:end], ref) @ coeffs
                 if G is None:
                     n_features = phi.shape[1]
                     G = np.zeros((n_features, n_features), dtype=phi.dtype)
@@ -290,7 +335,7 @@ class KoopmanSpectrumKDMD:
         if G is None or n_total == 0:
             raise ValueError("no samples provided in trajectories")
         G /= n_total
-        return self.eigenfunction_inner_product(G)
+        return G
 
     def evaluate_eigenfunctions(
         self,
