@@ -1,7 +1,7 @@
-import marimo as mo
+import marimo
 
 __generated_with = "0.19.11"
-app = mo.App(width="medium")
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -135,22 +135,14 @@ def _(
 
 
 @app.cell
-def _(mo):
-    return mo.md(
-        r"""
-        ### Correlation functions of observables
-        """
-    )
-
-
-@app.cell
 def _(cross_correlation, data_map, edmd, np, spectrum):
     observable = np.cos(data_map.reshape(-1))
     lags_obs , corr_obs = cf_observable = cross_correlation(observable,observable,dt=1,normalization="biased")
     psi_inner = spectrum.psi_inner(data=data_map,f_values=observable)
     f_hat =spectrum.best_coefficients(edmd.gram(),psi_inner)
-    koop_corr = spectrum.correlation_function_discrete(edmd.gram(), f_hat, f_hat)
-    return corr_obs, f_hat, koop_corr, lags_obs
+    G_phi = spectrum.eigenfunction_inner_product(edmd.gram())
+    koop_corr = spectrum.correlation_function_discrete(G_phi, f_hat, f_hat)
+    return G_phi, corr_obs, f_hat, koop_corr, lags_obs
 
 
 @app.cell
@@ -165,25 +157,16 @@ def _(corr_obs, koop_corr, lags_obs, np, plt):
 
 
 @app.cell
-def _(mo):
-    return mo.md(
-        r"""
-        ### Response Function
-        """
-    )
-
-
-@app.cell
-def _(data_map, dictionary, edmd, f_hat, np, spectrum):
+def _(G_phi, data_map, dictionary, edmd, f_hat, np, spectrum):
     X_const = np.array([1.0])  # dim=3
 
     delta_psi = dictionary.delta_from_constant(data_map, X_const)
     delta_gamma = spectrum.right_eigvecs.conj().T @ delta_psi
-    G_phi = spectrum.eigenfunction_inner_product(edmd.gram())
+    G_phi_resp = spectrum.eigenfunction_inner_product(edmd.gram())
 
-    gamma = np.linalg.pinv( G_phi,rcond=1e-5) @ delta_gamma
+    gamma = np.linalg.pinv( G_phi_resp,rcond=1e-5) @ delta_gamma
 
-    koop_resp = spectrum.correlation_function_discrete(G=edmd.gram(), coeff_f=f_hat, coeff_g=gamma)
+    koop_resp = spectrum.correlation_function_discrete(G_phi, coeff_f=f_hat, coeff_g=gamma)
     return (koop_resp,)
 
 

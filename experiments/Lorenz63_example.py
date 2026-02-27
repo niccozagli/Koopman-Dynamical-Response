@@ -75,7 +75,7 @@ def _(mo):
 def _(NoisyLorenz63):
     lorenz = NoisyLorenz63()
     t, X = lorenz.integrate_em_jit(
-        t_span=(0.0, 1000 + 2*1_000),
+        t_span=(0.0, 1000 + 10_000),
         dt=0.001,
         tau=10,
         transient=1000.0,
@@ -101,7 +101,7 @@ def _(X, cross_correlation, dt, plt, t):
     ax_cf[1].set_ylabel(r"$C_z(t)$",size=20)
     ax_cf[1].set_xlim((-0.5,15))
     plt.show()
-    return
+    return cf, lags
 
 
 @app.cell
@@ -367,9 +367,9 @@ def _(mo):
 
 @app.cell
 def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, plt, spectrum):
-    G_hat = np.eye(f_hat.shape[0], dtype=np.complex128)
+    G_phi = spectrum.eigenfunction_inner_product(G=np.eye(f_hat.shape[0]))
     koop_corr = spectrum.correlation_function_continuous(
-        G=G_hat,
+        G_phi=G_phi,
         coeff_f=f_hat,
         coeff_g=f_hat,
         eigenvalues=eigs_ct,
@@ -384,7 +384,7 @@ def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, plt, spectrum):
     ax_corr_obs.set_ylabel(r"$C_z(t)$",size=16)
     ax_corr_obs.legend()
     plt.show()
-    return G_hat, corr_obs, lags_obs
+    return G_phi, lags_obs
 
 
 @app.cell
@@ -422,7 +422,7 @@ def _(mo):
 
 @app.cell
 def _(
-    G_hat,
+    G_phi,
     S_r,
     U_r,
     dictionary,
@@ -449,7 +449,7 @@ def _(
 
 
     koop_resp = spectrum.correlation_function_continuous(
-        G=G_hat,
+        G_phi=G_phi,
         coeff_f=f_hat,
         coeff_g=gamma,
         eigenvalues=eigs_ct,
@@ -474,26 +474,28 @@ def _(mo):
 
 @app.cell
 def _():
-    from koopman_response.algorithms import KernelDMD , PolynomialKernel
+    from koopman_response.algorithms import KernelDMD , GaussianKernel
     from koopman_response import KoopmanSpectrumKDMD
+    from koopman_response.utils import standardize
 
-    return KernelDMD, KoopmanSpectrumKDMD, PolynomialKernel
+    return GaussianKernel, KernelDMD, KoopmanSpectrumKDMD, standardize
 
 
 @app.cell
-def _(dt, make_snapshots, np, scaled_data):
-    X_snap_kdmd , Y_snap_kdmd, dt_eff_kdmd = make_snapshots(scaled_data,stride=10, lag=1, dt=dt)
+def _(X, dt, make_snapshots, np, standardize):
+    standardised_data , mean, std = standardize(X)
+    X_snap_kdmd , Y_snap_kdmd, dt_eff_kdmd = make_snapshots(standardised_data,stride=1, lag=10, dt=dt)
     n_snapshots_training =  10_000
     idx = np.random.choice(X_snap_kdmd.shape[0], size=n_snapshots_training, replace=False)
     X_snap_kdmd = X_snap_kdmd[idx]
     Y_snap_kdmd = Y_snap_kdmd[idx]
-    return X_snap_kdmd, Y_snap_kdmd
+    return X_snap_kdmd, Y_snap_kdmd, std
 
 
 @app.cell
-def _(KernelDMD, PolynomialKernel, X_snap_kdmd, Y_snap_kdmd, np):
+def _(GaussianKernel, KernelDMD, X_snap_kdmd, Y_snap_kdmd, np):
     d = np.linalg.norm(X_snap_kdmd, axis=1).mean()
-    kdmd = KernelDMD(kernel=PolynomialKernel(degree=14,coef0=1,gamma=1/d))
+    kdmd = KernelDMD(kernel=GaussianKernel(sigma=2))
     _ = kdmd.fit_snapshots(X=X_snap_kdmd,Y=Y_snap_kdmd)
     return (kdmd,)
 
@@ -507,7 +509,7 @@ def _(TSVDRegularizer, kdmd):
 
 @app.cell
 def _(plt, tsvd_kdmd):
-    plt.semilogy(tsvd_kdmd.S)
+    plt.semilogy(tsvd_kdmd.S/tsvd_kdmd.S[0])
     return
 
 
@@ -515,8 +517,10 @@ def _(plt, tsvd_kdmd):
 def _(kdmd, tsvd_kdmd):
     K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
         kdmd.A,
-        rel_threshold=4e-10
-    )
+        rel_threshold=1e-11
+        )
+    
+    print(K_r_kdmd.shape)
     return (K_r_kdmd,)
 
 
@@ -548,52 +552,18 @@ def _(X_snap_kdmd, np, spectrum_kdmd, tsvd_kdmd):
 
 
 @app.cell
-def _(np):
-    def correlation_function_continuous_gphi(
-        G_phi: np.ndarray,
-        coeff_f: np.ndarray,
-        coeff_g: np.ndarray,
-        eigenvalues: np.ndarray,
-    ):
-        """
-        Return a callable C_fg(t) using Koopman eigenfunctions (continuous time):
-
-            C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
-        """
-        coeff_f = np.asarray(coeff_f).reshape(-1)
-        coeff_g = np.asarray(coeff_g).reshape(-1)
-        eigs = np.asarray(eigenvalues).reshape(-1)
-
-        # drop the static mode
-        coeff_f = coeff_f[1:]
-        coeff_g = coeff_g[1:]
-        eigs = eigs[1:]
-        G_use = G_phi[1:, 1:]
-        row = coeff_g.conj() @ G_use
-
-        def _corr(t):
-            if np.isscalar(t):
-                return row @ (coeff_f * np.exp(t * eigs))
-            t_arr = np.asarray(t)
-            exp_t = np.exp(np.outer(t_arr, eigs))
-            return (exp_t * coeff_f[None, :]) @ row
-
-        return _corr
-
-    return (correlation_function_continuous_gphi,)
-
-
-@app.cell
 def _(
-    corr_obs,
-    correlation_function_continuous_gphi,
+    cf,
     eigs_ct_kdmd,
     koopman_modes,
+    lags,
     lags_obs,
     plt,
     scalar_product_phi,
+    spectrum_kdmd,
+    std,
 ):
-    cf_kdmd = correlation_function_continuous_gphi(
+    cf_kdmd = spectrum_kdmd.correlation_function_continuous(
         G_phi=scalar_product_phi,
         coeff_f=koopman_modes,
         coeff_g=koopman_modes,
@@ -601,9 +571,9 @@ def _(
     )
 
     fig_final, ax_final = plt.subplots()
-    ax_final.plot(lags_obs, corr_obs)
+    ax_final.plot(lags, cf )
     ax_final.set_xlim((-1,30))
-    ax_final.plot(lags_obs,cf_kdmd(lags_obs).real)
+    ax_final.plot(lags_obs,cf_kdmd(lags_obs).real  *  std[2]**2)
     plt.show()
     return
 

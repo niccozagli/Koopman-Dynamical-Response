@@ -98,8 +98,10 @@ class TSVDRegularizer:
 
         if rel_threshold is not None:
             self.rel_threshold = float(rel_threshold)
+            self.rank = None
         if rank is not None:
             self.rank = int(rank)
+            self.rel_threshold = None
 
         Ur, Sr = self._truncate(rel_threshold, rank)
         Sr_inv_sqrt = np.diag(1.0 / np.sqrt(Sr))

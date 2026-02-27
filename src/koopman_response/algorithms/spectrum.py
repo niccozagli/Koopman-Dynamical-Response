@@ -132,7 +132,7 @@ class KoopmanSpectrumEDMD:
 
     def correlation_function_discrete(
         self,
-        G: np.ndarray,
+        G_phi: np.ndarray,
         coeff_f: np.ndarray,
         coeff_g: np.ndarray,
         eigenvalues: np.ndarray | None = None,
@@ -142,11 +142,11 @@ class KoopmanSpectrumEDMD:
 
             C_fg(k) = coeff_g^* @ G_phi @ (coeff_f * lambda^k)
 
-        where G_phi = Xi^* G Xi and lambda are the eigenvalues used in the
-        power. If eigenvalues is None, self.eigenvalues are used.
+        where G_phi is the Gram matrix of Koopman eigenfunctions and lambda are
+        the eigenvalues used in the power. If eigenvalues is None, self.eigenvalues
+        are used.
         """
         eigs = self.eigenvalues if eigenvalues is None else eigenvalues
-        G_phi = self.eigenfunction_inner_product(G)
 
         coeff_f = np.asarray(coeff_f).reshape(-1)
         coeff_g = np.asarray(coeff_g).reshape(-1)
@@ -170,7 +170,7 @@ class KoopmanSpectrumEDMD:
 
     def correlation_function_continuous(
         self,
-        G: np.ndarray,
+        G_phi: np.ndarray,
         coeff_f: np.ndarray,
         coeff_g: np.ndarray,
         eigenvalues: np.ndarray | None = None,
@@ -180,11 +180,11 @@ class KoopmanSpectrumEDMD:
 
             C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
 
-        where G_phi = Xi^* G Xi and lambda are continuous-time eigenvalues used in
-        the exponential. If eigenvalues is None, self.eigenvalues are used.
+        where G_phi is the Gram matrix of Koopman eigenfunctions and lambda are
+        continuous-time eigenvalues used in the exponential. If eigenvalues is None,
+        self.eigenvalues are used.
         """
         eigs = self.eigenvalues if eigenvalues is None else eigenvalues
-        G_phi = self.eigenfunction_inner_product(G)
 
         coeff_f = np.asarray(coeff_f).reshape(-1)
         coeff_g = np.asarray(coeff_g).reshape(-1)
@@ -418,7 +418,7 @@ class KoopmanSpectrumKDMD:
 
     def correlation_function_continuous(
         self,
-        G: np.ndarray,
+        G_phi: np.ndarray,
         coeff_f: np.ndarray,
         coeff_g: np.ndarray,
         eigenvalues: np.ndarray | None = None,
@@ -428,11 +428,11 @@ class KoopmanSpectrumKDMD:
 
             C_fg(t) = coeff_g^* @ G_phi @ (coeff_f * exp(t * lambda))
 
-        where G_phi = Xi^* G Xi and lambda are continuous-time eigenvalues used in
-        the exponential. If eigenvalues is None, self.eigenvalues are used.
+        where G_phi is the Gram matrix of Koopman eigenfunctions and lambda are
+        continuous-time eigenvalues used in the exponential. If eigenvalues is None,
+        self.eigenvalues are used.
         """
         eigs = self.eigenvalues if eigenvalues is None else eigenvalues
-        G_phi = self.eigenfunction_inner_product(G)
 
         coeff_f = np.asarray(coeff_f).reshape(-1)
         coeff_g = np.asarray(coeff_g).reshape(-1)
