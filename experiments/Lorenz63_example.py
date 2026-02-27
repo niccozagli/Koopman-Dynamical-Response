@@ -483,7 +483,7 @@ def _(
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### KDMD
+    ### Kernel DMD
     """)
     return
 
@@ -495,6 +495,14 @@ def _():
     from koopman_response.utils import standardize
 
     return GaussianKernel, KernelDMD, KoopmanSpectrumKDMD, standardize
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    1. Preprocess the data: standardise the data
+    """)
+    return
 
 
 @app.cell
@@ -511,11 +519,26 @@ def _(X, dt, make_snapshots, np, standardize):
 
 
 @app.cell
-def _(GaussianKernel, KernelDMD, X_snap_kdmd, Y_snap_kdmd, np):
-    d = np.linalg.norm(X_snap_kdmd, axis=1).mean()
+def _(mo):
+    mo.md(r"""
+    2. Fit the Gaussian Kernel. Parameter of the kernel selected to represent the average distance among points in the snapshot data.
+    """)
+    return
+
+
+@app.cell
+def _(GaussianKernel, KernelDMD, X_snap_kdmd, Y_snap_kdmd):
     kdmd = KernelDMD(kernel=GaussianKernel(sigma=2))
     _ = kdmd.fit_snapshots(X=X_snap_kdmd,Y=Y_snap_kdmd)
     return (kdmd,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    3. Regularise the Kernel: compute the eigendecomposition and keep only a subset. Rank of the matrix is usually much lower than the original dimension.
+    """)
+    return
 
 
 @app.cell
@@ -527,7 +550,22 @@ def _(TSVDRegularizer, kdmd):
 
 @app.cell
 def _(plt, tsvd_kdmd):
-    plt.semilogy(tsvd_kdmd.S/tsvd_kdmd.S[0])
+    fig_sv , ax_sv = plt.subplots()
+
+    ax_sv.plot(tsvd_kdmd.S/tsvd_kdmd.S[0])
+    ax_sv.set_yscale("log")
+    ax_sv.set_xlabel("$i$",size=16)
+    ax_sv.set_ylabel(r"$\sigma^2_i / \sigma^2_1$",size=16)
+    ax_sv.set_xlim((-10,1000))
+    plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    4. Evaluate the spectrum of the reduced Koopman operator
+    """)
     return
 
 
@@ -535,7 +573,7 @@ def _(plt, tsvd_kdmd):
 def _(kdmd, tsvd_kdmd):
     K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
         kdmd.A,
-        rel_threshold=1e-10
+        rel_threshold=5e-11
         )
     return (K_r_kdmd,)
 
@@ -558,26 +596,52 @@ def _(K_r_kdmd, KoopmanSpectrumKDMD, dt_eff, eigs_ct, kdmd, plt):
 
 
 @app.cell
-def _(X_snap_kdmd, np, spectrum_kdmd, tsvd_kdmd):
-    observable_kdmd = X_snap_kdmd[:,2]
-    koopman_modes = spectrum_kdmd.left_eigvecs.conj().T @ np.diag(1.0 / np.sqrt(tsvd_kdmd.Sr)) @ tsvd_kdmd.Ur.conj().T @ observable_kdmd
-    Phi = tsvd_kdmd.Ur @ np.diag(np.sqrt(tsvd_kdmd.Sr)) @ spectrum_kdmd.right_eigvecs
-    scalar_product_phi =spectrum_kdmd.right_eigvecs.conj().T @ np.diag(tsvd_kdmd.Sr) @ spectrum_kdmd.right_eigvecs /  Phi.shape[0] #  Phi.conj().T @ Phi / Phi.shape[0]
-    return koopman_modes, scalar_product_phi
+def _(mo):
+    mo.md(r"""
+    5. Find the koopman modes of an observable, i.e. its decomposition in terms of Koopman eigenfunctions
+    $$ f(x) = \sum_{k=1}^r f_k \phi_k(x)$$
+    """)
+    return
+
+
+@app.cell
+def _(X_snap_kdmd, spectrum_kdmd, tsvd_kdmd):
+    observable_kdmd = X_snap_kdmd[:, 2]
+    koopman_modes = spectrum_kdmd.koopman_modes(
+        observable_kdmd,
+        U_r=tsvd_kdmd.Ur,
+        S_r=tsvd_kdmd.Sr,
+    )
+    return (koopman_modes,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    6. Get the scalar product of Koopman eigenfunctions using the training data
+    """)
+    return
 
 
 @app.cell
 def _(
+    X_snap_kdmd,
     cf,
     eigs_ct_kdmd,
     koopman_modes,
     lags,
     lags_obs,
     plt,
-    scalar_product_phi,
     spectrum_kdmd,
     std,
+    tsvd_kdmd,
 ):
+    scalar_product_phi = spectrum_kdmd.eigenfunction_gram(
+        S_r=tsvd_kdmd.Sr,
+        n_samples=X_snap_kdmd.shape[0],
+        normalize=True,
+    )
+
     cf_kdmd = spectrum_kdmd.correlation_function_continuous(
         G_phi=scalar_product_phi,
         coeff_f=koopman_modes,
@@ -586,50 +650,54 @@ def _(
     )
 
     fig_final, ax_final = plt.subplots()
-    ax_final.plot(lags, cf )
-    ax_final.set_xlim((-1,30))
-    ax_final.plot(lags_obs,cf_kdmd(lags_obs).real  *  std[2]**2)
+    ax_final.plot(lags, cf , label="Time Series")
+    ax_final.set_xlim((-1,15))
+    ax_final.plot(lags_obs,cf_kdmd(lags_obs).real  *  std[2]**2,label="KDMD reconstruction")
+    ax_final.set_xlabel(r"$t$",size=16)
+    ax_final.set_ylabel(r"$t$",size=16)
+    ax_final.legend()
     plt.show()
+    return (scalar_product_phi,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    7. Get response properties, i.e. the decomposition of the response observable in terms of Koopman
+    $$ \Gamma(x) = \sum_k \Gamma_k \phi_k(x)$$
+
+    The coefficients can be found as
+
+    $\boldsymbol{\Gamma} = G_\phi^{-1}\boldsymbol{\Delta} $ where $G_\phi^{-1}$ is the inverse of the scalar product of the Koopman eigenfunctions, and
+    $$\Delta_k =   \sum_{j=1}^M  (\boldsymbol{a}_k)^*_j \int \mathbf{X}(x) \cdot \nabla K(x,x_j)^* \rho_0(x) dx$$
+
+    The integral w.r.t invariant measure is approximated on a trajectory (could also be the training data).
+    """)
     return
 
 
 @app.cell
-def _(X_snap_kdmd, kdmd, np, spectrum_kdmd, standardised_data, tsvd_kdmd):
-    # Estimate Delta_k = sum_j c_k^*(j) <X · ∇_x k(x, x_j)>_0
-    def perturbation_field(x: np.ndarray) -> np.ndarray:
-        field = np.zeros_like(x)
-        field[:, 1] = x[:,0]  
-        return field
+def _(
+    X_snap_kdmd,
+    kdmd,
+    np,
+    scalar_product_phi,
+    spectrum_kdmd,
+    standardised_data,
+    tsvd_kdmd,
+):
+    data = standardised_data[::10]
+    perturbation_kdmd = {1: data[:, 0]}
+    Delta = spectrum_kdmd.delta_from_trajectory(
+        trajectories=data,
+        X_values=perturbation_kdmd,
+        kernel=kdmd.kernel,
+        reference_data=X_snap_kdmd,
+        U_r=tsvd_kdmd.Ur,
+        S_r=tsvd_kdmd.Sr,
+        batch_size=5_000,
+    )
 
-    C = tsvd_kdmd.Ur * (1 / np.sqrt(tsvd_kdmd.Sr)) @ spectrum_kdmd.right_eigvecs
-    data=standardised_data[::10]
-    X_field = perturbation_field(data)
-
-    n_samples = data.shape[0]
-    n_centers = X_snap_kdmd.shape[0]
-    batch_size = 5_000
-    accum = np.zeros((n_centers,), dtype=float)
-    n_total = 0
-
-    for start in range(0, n_samples, batch_size):
-        end = min(start + batch_size, n_samples)
-        x_batch = data[start:end]
-        f_batch = X_field[start:end]
-        grad_k = kdmd.kernel.grad_x(x_batch, X_snap_kdmd)  # (b, M, d)
-        inner = np.einsum("bmd,bd->bm", grad_k, f_batch)
-        accum += inner.sum(axis=0)
-        n_total += inner.shape[0]
-
-    if n_total == 0:
-        raise ValueError("no samples provided to estimate Delta_k")
-
-    b = accum / n_total
-    Delta = C.conj().T @ b
-    return (Delta,)
-
-
-@app.cell
-def _(Delta, np, scalar_product_phi):
     Gamma = np.linalg.inv(scalar_product_phi  ) @ Delta
     return (Gamma,)
 
@@ -662,11 +730,6 @@ def _(
     ax_resp_kdmd.set_xlabel(r"$t$",size=16)
     ax_resp_kdmd.set_ylabel(r"$G_z(t)$",size=16)
     plt.show()
-    return
-
-
-@app.cell
-def _():
     return
 
 
