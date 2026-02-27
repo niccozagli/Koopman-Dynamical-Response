@@ -13,7 +13,7 @@ def _():
     from koopman_response.systems.lorenz96 import NoisyLorenz96
     from koopman_response.algorithms import KernelDMD , GaussianKernel
     from koopman_response import KoopmanSpectrumKDMD
-    from koopman_response.utils.preprocessing import make_snapshots, standardize_global
+    from koopman_response.utils.preprocessing import make_snapshots, standardize
     from koopman_response.algorithms.regularization import TSVDRegularizer
     from koopman_response.utils import cross_correlation
 
@@ -28,7 +28,7 @@ def _():
         mo,
         np,
         plt,
-        standardize_global,
+        standardize,
     )
 
 
@@ -49,7 +49,7 @@ def _(mo):
 
 @app.cell
 def _(NoisyLorenz96):
-    lorenz = NoisyLorenz96(n_state=20, forcing=8.0, noise=2.5)
+    lorenz = NoisyLorenz96(n_state=20, forcing=8.0, noise=1.5)
     t, X = lorenz.integrate_em_jit(
         t_span=(0.0, 10_000.0),
         dt=0.001,
@@ -65,24 +65,28 @@ def _(NoisyLorenz96):
 
 @app.cell
 def _(cross_correlation, dt, momentum, plt):
-    lags , cf = cross_correlation(momentum,momentum,dt,max_lag=1000,normalization="biased")
+    lags , cf = cross_correlation(
+        x  = momentum,
+        y  = momentum,
+        dt = dt,max_lag=1000,
+        normalization="biased")
     plt.plot(lags,cf)
-    plt.xlim((-0.2,5))
+    # plt.xlim((-0.2,5))
     plt.show()
-    return
+    return cf, lags
 
 
 @app.cell
-def _(X, standardize_global):
-    scaled_data, mean, std = standardize_global(X)
-    return (scaled_data,)
+def _(X, standardize):
+    scaled_data, mean, std = standardize(X)
+    return scaled_data, std
 
 
 @app.cell
 def _(dt, make_snapshots, np, scaled_data):
-    X_snap , Y_snap, dt_eff = make_snapshots(scaled_data, stride= 10, lag=5, dt=dt)
+    X_snap , Y_snap, dt_eff = make_snapshots(scaled_data, stride= 10, dt=dt)
 
-    n_snapshots_training = 5000
+    n_snapshots_training = 10_000
     idx = np.random.choice(X_snap.shape[0], size=n_snapshots_training, replace=False)
     X_snap = X_snap[idx]
     Y_snap = Y_snap[idx]
@@ -90,8 +94,18 @@ def _(dt, make_snapshots, np, scaled_data):
 
 
 @app.cell
+def _(np, scaled_data):
+    from scipy.spatial.distance import pdist
+
+    m = 10_000  # subsample size
+    idx_sub = np.random.choice(scaled_data.shape[0], size=min(m, scaled_data.shape[0]), replace=False)
+    sigma = np.median(pdist(scaled_data[idx_sub], metric="euclidean"))
+    print(sigma)
+    return
+
+
+@app.cell
 def _(GaussianKernel, KernelDMD, X_snap, Y_snap):
-    # sigma = float(np.mean(np.linalg.norm(X_snap, axis=1)))
     kdmd = KernelDMD(kernel=GaussianKernel(sigma=6))
     _ = kdmd.fit_snapshots(X=X_snap,Y=Y_snap)
     return (kdmd,)
@@ -113,50 +127,31 @@ def _(TSVDRegularizer, kdmd):
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
 def _(plt, tsvd):
     fig_sv , ax_sv = plt.subplots()
-    ax_sv.plot(tsvd.S / tsvd.S[0],'.')
+
+    ax_sv.plot(tsvd.S/tsvd.S[0],'.')
     ax_sv.set_yscale("log")
+    ax_sv.set_xlabel("$i$",size=16)
+    ax_sv.set_ylabel(r"$\sigma^2_i / \sigma^2_1$",size=16)
+    # ax_sv.set_xlim((-10,1000))
     plt.show()
     return
 
 
 @app.cell
-def _(tsvd):
-    check = tsvd.U.T @ tsvd.U  
-
-    return
-
-
-@app.cell
 def _(kdmd, tsvd):
-    K_r, U_r, S_r = tsvd.solve_from_factorization(kdmd.A, rel_threshold=1e-4)
-    return (K_r,)
+    Kr, Ur, Sr = tsvd.solve_from_factorization(
+        kdmd.A,
+        rel_threshold=1e-5
+        )
+    print(Kr.shape)
+    return (Kr,)
 
 
 @app.cell
-def _(K_r, KoopmanSpectrumKDMD, dt_eff, kdmd, plt):
-    spectrum = KoopmanSpectrumKDMD.from_koopman_matrix(K_r,kernel=kdmd.kernel)
+def _(KoopmanSpectrumKDMD, Kr, dt_eff, kdmd, plt):
+    spectrum = KoopmanSpectrumKDMD.from_koopman_matrix(Kr,kernel=kdmd.kernel)
     eigs_ct = spectrum.continuous_time_eigenvalues(dt_eff)
     fig, ax = plt.subplots(figsize=(4, 4))
     ax.plot(eigs_ct.real, eigs_ct.imag, ".", ms=4)
@@ -167,32 +162,48 @@ def _(K_r, KoopmanSpectrumKDMD, dt_eff, kdmd, plt):
     plt.tight_layout()
     plt.xlim((-3,0.1))
     plt.show()
-    return (spectrum,)
+    return eigs_ct, spectrum
 
 
 @app.cell
-def _(np, spectrum, tsvd):
-    C = tsvd.Ur * 1/np.sqrt(tsvd.Sr) @ spectrum.right_eigvecs
-    return
-
-
-@app.cell
-def _(X_snap, kdmd, scaled_data, spectrum, tsvd):
-    G_phi = spectrum.inner_product_inv_measure(
-        scaled_data[::10],
-        batch_size=10_000,
-        kernel=kdmd.kernel,              # optional if stored in spectrum
-        reference_data=X_snap,       # optional if stored
-        U_r=tsvd.Ur, 
-        S_r=tsvd.Sr,            # optional if stored
+def _(X_snap, spectrum, tsvd):
+    observable = X_snap.mean(axis=1)
+    koopman_modes = spectrum.koopman_modes(
+        observable,
+        U_r=tsvd.Ur,
+        S_r=tsvd.Sr,
     )
+    return (koopman_modes,)
+
+
+@app.cell
+def _(X_snap, cf, eigs_ct, koopman_modes, lags, plt, spectrum, std, tsvd):
+    scalar_product_phi = spectrum.eigenfunction_gram(
+        S_r=tsvd.Sr,
+        n_samples=X_snap.shape[0],
+        normalize=True,
+    )
+
+    cf_kdmd = spectrum.correlation_function_continuous(
+        G_phi=scalar_product_phi,
+        coeff_f=koopman_modes,
+        coeff_g=koopman_modes,
+        eigenvalues=eigs_ct
+    )
+
+    fig_final, ax_final = plt.subplots()
+    ax_final.plot(lags, cf , label="Time Series")
+    ax_final.set_xlim((-0.1,5))
+    ax_final.plot(lags,cf_kdmd(lags).real  *  std[2]**2,label="KDMD reconstruction")
+    ax_final.set_xlabel(r"$t$",size=16)
+    ax_final.set_ylabel(r"$t$",size=16)
+    ax_final.legend()
+    plt.show()
     return
 
 
 @app.cell
 def _():
-    # inner = (.conj().T @ f_vals) / data.shape[0]  # <phi, f>
-    # coeffs = np.linalg.pinv(G_phi) @ inner
     return
 
 
