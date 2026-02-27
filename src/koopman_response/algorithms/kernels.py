@@ -34,6 +34,14 @@ class Kernel(ABC):
     def __call__(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
         """Evaluate kernel matrix K(X, Y)."""
 
+    def grad_x(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
+        """
+        Gradient of the kernel with respect to X.
+
+        Returns an array of shape (n_samples_X, n_samples_Y, n_features).
+        """
+        raise NotImplementedError("grad_x is not implemented for this kernel")
+
 
 class GaussianKernel(Kernel):
     """
@@ -53,6 +61,14 @@ class GaussianKernel(Kernel):
         X, Y = _validate_kernel_inputs(X, Y)
         dists = _pairwise_sq_dists(X, Y)
         return np.exp(-dists / (2.0 * self.sigma**2))
+
+    def grad_x(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
+        if Y is None:
+            Y = X
+        X, Y = _validate_kernel_inputs(X, Y)
+        K = self.__call__(X, Y)
+        diff = X[:, None, :] - Y[None, :, :]
+        return -(K[:, :, None] * diff) / (self.sigma**2)
 
 
 class PolynomialKernel(Kernel):
@@ -92,3 +108,6 @@ class PolynomialKernel(Kernel):
             raise ValueError("PolynomialKernel must be fit before calling or provide gamma")
         gamma = self._gamma if self.gamma is None else float(self.gamma)
         return (gamma * (X @ Y.T) + self.coef0) ** self.degree
+
+    def grad_x(self, X: np.ndarray, Y: np.ndarray | None = None) -> np.ndarray:
+        raise NotImplementedError("PolynomialKernel grad_x is not yet implemented")

@@ -170,7 +170,7 @@ def _(X, dt, make_snapshots, minmax_scale):
 
     lag = 10
     X_snap, Y_snap, dt_eff = make_snapshots(scaled_data, lag=lag, dt=dt)
-    return X_snap, Y_snap, dt_eff, scaled_data
+    return X_snap, Y_snap, data_max, data_min, dt_eff, scaled_data
 
 
 @app.cell
@@ -366,7 +366,20 @@ def _(mo):
 
 
 @app.cell
-def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, plt, spectrum):
+def _(
+    cf,
+    cross_correlation,
+    data_max,
+    data_min,
+    dt,
+    eigs_ct,
+    f_hat,
+    lags,
+    np,
+    observable,
+    plt,
+    spectrum,
+):
     G_phi = spectrum.eigenfunction_inner_product(G=np.eye(f_hat.shape[0]))
     koop_corr = spectrum.correlation_function_continuous(
         G_phi=G_phi,
@@ -374,17 +387,19 @@ def _(cross_correlation, dt, eigs_ct, f_hat, np, observable, plt, spectrum):
         coeff_g=f_hat,
         eigenvalues=eigs_ct,
     )
+
+    alpha = 2 / (data_max[2] - data_min[2] )
     lags_obs, corr_obs = cross_correlation(observable,observable,dt=dt,normalization="biased",max_lag=10**4)
 
     fig_corr_obs, ax_corr_obs = plt.subplots()
-    ax_corr_obs.plot(lags_obs, corr_obs,label="Time Series")
-    ax_corr_obs.plot(lags_obs, np.real(koop_corr(lags_obs)), ".",ms=3,label="Koopman Reconstruction")
+    ax_corr_obs.plot(lags, cf,label="Time Series")
+    ax_corr_obs.plot(lags_obs, koop_corr(lags_obs).real / alpha**2, ".",ms=3,label="Koopman Reconstruction")
     ax_corr_obs.set_xlim((-1, 15))
     ax_corr_obs.set_xlabel(r"$t$",size=16)
     ax_corr_obs.set_ylabel(r"$C_z(t)$",size=16)
     ax_corr_obs.legend()
     plt.show()
-    return G_phi, lags_obs
+    return G_phi, alpha, lags_obs
 
 
 @app.cell
@@ -425,6 +440,7 @@ def _(
     G_phi,
     S_r,
     U_r,
+    alpha,
     dictionary,
     eigs_ct,
     f_hat,
@@ -456,12 +472,12 @@ def _(
     )
 
     fig_resp, ax_resp = plt.subplots()
-    ax_resp.plot(lags_obs, koop_resp(lags_obs).real)
+    ax_resp.plot( lags_obs, koop_resp(lags_obs).real / alpha)
     ax_resp.set_xlim((-1, 15))
     ax_resp.set_xlabel(r"$t$",size=16)
     ax_resp.set_ylabel(r"$G_f(t)$",size=16)
     plt.show()
-    return
+    return (koop_resp,)
 
 
 @app.cell
@@ -483,13 +499,15 @@ def _():
 
 @app.cell
 def _(X, dt, make_snapshots, np, standardize):
-    standardised_data , mean, std = standardize(X)
-    X_snap_kdmd , Y_snap_kdmd, dt_eff_kdmd = make_snapshots(standardised_data,stride=1, lag=10, dt=dt)
+    standardised_data, mean, std = standardize(X)
+    X_snap_kdmd, Y_snap_kdmd, dt_eff_kdmd = make_snapshots(
+        standardised_data, stride=1, lag=10, dt=dt
+    )
     n_snapshots_training =  10_000
     idx = np.random.choice(X_snap_kdmd.shape[0], size=n_snapshots_training, replace=False)
     X_snap_kdmd = X_snap_kdmd[idx]
     Y_snap_kdmd = Y_snap_kdmd[idx]
-    return X_snap_kdmd, Y_snap_kdmd, std
+    return X_snap_kdmd, Y_snap_kdmd, standardised_data, std
 
 
 @app.cell
@@ -517,10 +535,8 @@ def _(plt, tsvd_kdmd):
 def _(kdmd, tsvd_kdmd):
     K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
         kdmd.A,
-        rel_threshold=1e-11
+        rel_threshold=1e-10
         )
-    
-    print(K_r_kdmd.shape)
     return (K_r_kdmd,)
 
 
@@ -545,9 +561,8 @@ def _(K_r_kdmd, KoopmanSpectrumKDMD, dt_eff, eigs_ct, kdmd, plt):
 def _(X_snap_kdmd, np, spectrum_kdmd, tsvd_kdmd):
     observable_kdmd = X_snap_kdmd[:,2]
     koopman_modes = spectrum_kdmd.left_eigvecs.conj().T @ np.diag(1.0 / np.sqrt(tsvd_kdmd.Sr)) @ tsvd_kdmd.Ur.conj().T @ observable_kdmd
-
     Phi = tsvd_kdmd.Ur @ np.diag(np.sqrt(tsvd_kdmd.Sr)) @ spectrum_kdmd.right_eigvecs
-    scalar_product_phi = Phi.conj().T @ Phi / Phi.shape[0]
+    scalar_product_phi =spectrum_kdmd.right_eigvecs.conj().T @ np.diag(tsvd_kdmd.Sr) @ spectrum_kdmd.right_eigvecs /  Phi.shape[0] #  Phi.conj().T @ Phi / Phi.shape[0]
     return koopman_modes, scalar_product_phi
 
 
@@ -574,6 +589,78 @@ def _(
     ax_final.plot(lags, cf )
     ax_final.set_xlim((-1,30))
     ax_final.plot(lags_obs,cf_kdmd(lags_obs).real  *  std[2]**2)
+    plt.show()
+    return
+
+
+@app.cell
+def _(X_snap_kdmd, kdmd, np, spectrum_kdmd, standardised_data, tsvd_kdmd):
+    # Estimate Delta_k = sum_j c_k^*(j) <X · ∇_x k(x, x_j)>_0
+    def perturbation_field(x: np.ndarray) -> np.ndarray:
+        field = np.zeros_like(x)
+        field[:, 1] = x[:,0]  
+        return field
+
+    C = tsvd_kdmd.Ur * (1 / np.sqrt(tsvd_kdmd.Sr)) @ spectrum_kdmd.right_eigvecs
+    data=standardised_data[::10]
+    X_field = perturbation_field(data)
+
+    n_samples = data.shape[0]
+    n_centers = X_snap_kdmd.shape[0]
+    batch_size = 5_000
+    accum = np.zeros((n_centers,), dtype=float)
+    n_total = 0
+
+    for start in range(0, n_samples, batch_size):
+        end = min(start + batch_size, n_samples)
+        x_batch = data[start:end]
+        f_batch = X_field[start:end]
+        grad_k = kdmd.kernel.grad_x(x_batch, X_snap_kdmd)  # (b, M, d)
+        inner = np.einsum("bmd,bd->bm", grad_k, f_batch)
+        accum += inner.sum(axis=0)
+        n_total += inner.shape[0]
+
+    if n_total == 0:
+        raise ValueError("no samples provided to estimate Delta_k")
+
+    b = accum / n_total
+    Delta = C.conj().T @ b
+    return (Delta,)
+
+
+@app.cell
+def _(Delta, np, scalar_product_phi):
+    Gamma = np.linalg.inv(scalar_product_phi  ) @ Delta
+    return (Gamma,)
+
+
+@app.cell
+def _(
+    Gamma,
+    alpha,
+    eigs_ct_kdmd,
+    koop_resp,
+    koopman_modes,
+    lags_obs,
+    plt,
+    scalar_product_phi,
+    spectrum_kdmd,
+    std,
+):
+    resp_kdmd = spectrum_kdmd.correlation_function_continuous(
+        G_phi=scalar_product_phi,
+        coeff_f=koopman_modes,
+        coeff_g=Gamma,
+        eigenvalues=eigs_ct_kdmd
+    )
+
+    fig_resp_kdmd, ax_resp_kdmd = plt.subplots()
+    ax_resp_kdmd.set_xlim((-1,15))
+    ax_resp_kdmd.plot(lags_obs, koop_resp(lags_obs).real / alpha , label="EDMD: Polynomial Dictionary" )
+    ax_resp_kdmd.plot(lags_obs,resp_kdmd(lags_obs).real * std[2] , label = "KDMD: Gaussian Kernel")
+    ax_resp_kdmd.legend()
+    ax_resp_kdmd.set_xlabel(r"$t$",size=16)
+    ax_resp_kdmd.set_ylabel(r"$G_z(t)$",size=16)
     plt.show()
     return
 

@@ -99,8 +99,8 @@ class KernelDMD:
         Kxx = _kernel_matrix(self.kernel, X, X, batch_size, show_progress)
         Kyx = _kernel_matrix(self.kernel, Y, X, batch_size, show_progress)
 
-        G = Kxx / Kxx.shape[0]
-        A = Kyx / Kyx.shape[0]
+        G = Kxx #/ Kxx.shape[0]
+        A = Kyx #/ Kyx.shape[0]
 
         self.G = G
         self.A = A
