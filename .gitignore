@@ -31,7 +31,7 @@ htmlcov/
 
 # Data
 *.pkl
-
+data/*
 # Pictures and videos
 *.png
 *.mp4
