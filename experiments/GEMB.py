@@ -42,7 +42,7 @@ def _(Path):
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
 
-    n_snapshots_training = 10_000
+    n_snapshots_training = 30_000
     rng_seed = 0
     return dataset_path, n_snapshots_training, rng_seed
 
@@ -130,14 +130,16 @@ def _(
     scaled_data,
 ):
     # Kernel DMD
+    rel_threshold = 3e-2
     sigma_median = float(np.median(pdist(scaled_data[idx], metric="euclidean")))
 
     kdmd = KernelDMD(kernel=GaussianKernel(sigma=sigma_median))
     kdmd.fit_snapshots(X=X_snap, Y=Y_snap)
 
     tsvd = TSVDRegularizer()
-    tsvd.factorize(kdmd.G, method="eigh")
-    return kdmd, tsvd
+    rel_threshold_svd_temporary = 1e-3
+    tsvd.factorize(kdmd.G, method="eigsh", rel_threshold=rel_threshold_svd_temporary)
+    return kdmd, rel_threshold_svd_temporary, tsvd
 
 
 @app.cell
@@ -154,28 +156,27 @@ def _(plt, tsvd):
 
 
 @app.cell
-def _(kdmd, np, plt, tsvd):
-    thresholds= np.linspace(start=1e-4,stop=3e-2,num=50)
+def _(kdmd, np, plt, rel_threshold_svd_temporary, tsvd):
+    thresholds = np.linspace(start=rel_threshold_svd_temporary, stop=0.5, num=50)
     _records = []
     for _rel_threshold in thresholds:
         _Kr, _, _ = tsvd.solve_from_factorization(
-        kdmd.A,
-        rel_threshold=_rel_threshold,
+            kdmd.A,
+            rel_threshold=_rel_threshold,
         )
         _records.append(_Kr.shape[0])
 
     _fig, _ax = plt.subplots()
-    _ax.plot(thresholds,_records)
+    _ax.plot(thresholds, _records)
     return
 
 
 @app.cell
 def _(KoopmanSpectrumKDMD, dt_eff, kdmd, tsvd):
-    rel_threshold = 3e-2
-
+    rel_threshold_svd = 5e-3
     Kr, Ur, Sr = tsvd.solve_from_factorization(
         kdmd.A,
-        rel_threshold=rel_threshold,
+        rel_threshold_svd
     )
     spectrum = KoopmanSpectrumKDMD.from_koopman_matrix(
         Kr,

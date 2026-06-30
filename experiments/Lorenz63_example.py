@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.11"
+__generated_with = "0.22.0"
 app = marimo.App(width="medium")
 
 
@@ -92,6 +92,7 @@ def _(X, cross_correlation, dt, plt, t):
     lags, cf = cross_correlation(signal,signal,dt=dt,normalization="biased")
 
     ax_cf[0].plot(t,signal)
+    ax_cf[0].set_xlim(left=9_000,right=9_050)
     ax_cf[1].plot(lags,cf)
 
     ax_cf[0].set_xlim()
