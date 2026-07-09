@@ -647,16 +647,17 @@ class KoopmanSpectrumKDMD:
                 end = min(start + batch_size, n_samples)
                 x_batch = seg_arr[start:end]
 
-                # Compute kernel gradients for the batch.
-                # Shape: (batch, n_centers, dim)
-                grad_k = kernel_val.grad_x(x_batch, ref_arr)
-
-                # Accumulate X · ∇_x k(x, x_j) only over active dimensions.
-                # This avoids unnecessary work for zero components.
-                inner = np.zeros((grad_k.shape[0], grad_k.shape[1]), dtype=grad_k.dtype)
+                # Assemble the per-sample perturbation field for this batch,
+                # filling only the active (nonzero) dimensions.
+                V_batch = np.zeros((x_batch.shape[0], dim), dtype=float)
                 for d, values in active:
-                    v_batch = values[start:end]
-                    inner += grad_k[:, :, d] * v_batch[:, None]
+                    V_batch[:, d] = values[start:end]
+
+                # Contract X · ∇_x k(x, x_j) directly. grad_x_dot avoids the
+                # (batch, n_centers, dim) gradient tensor, which otherwise
+                # dominates memory when dim is large.
+                # Shape: (batch, n_centers)
+                inner = kernel_val.grad_x_dot(x_batch, ref_arr, V_batch)
 
                 # Sum over samples to build the empirical average.
                 if G is None:

@@ -73,6 +73,25 @@ class Kernel(ABC):
         """
         raise NotImplementedError("grad_x is not implemented for this kernel")
 
+    def grad_x_dot(
+        self, X: np.ndarray, Y: np.ndarray | None, V: np.ndarray
+    ) -> np.ndarray:
+        """
+        Directional derivative of the kernel contracted with a field V:
+
+            out[i, j] = sum_d V[i, d] * (d/dX_d) k(X_i, Y_j)
+
+        Returns an array of shape (n_samples_X, n_samples_Y).
+
+        The default implementation materializes the full grad_x tensor and
+        contracts it. Kernels with a closed form should override this to avoid
+        the (n_X, n_Y, n_features) intermediate, which is the dominant memory
+        cost when V has many dimensions.
+        """
+        grad = self.grad_x(X, Y)
+        V = np.asarray(V, dtype=float)
+        return np.einsum("ijd,id->ij", grad, V)
+
 
 class GaussianKernel(Kernel):
     """
@@ -100,6 +119,24 @@ class GaussianKernel(Kernel):
         K = self.__call__(X, Y)
         diff = X[:, None, :] - Y[None, :, :]
         return -(K[:, :, None] * diff) / (self.sigma**2)
+
+    def grad_x_dot(
+        self, X: np.ndarray, Y: np.ndarray | None, V: np.ndarray
+    ) -> np.ndarray:
+        # Closed form of sum_d V[i,d] * grad_x[i,j,d] that never allocates the
+        # (n_X, n_Y, dim) tensor:
+        #   sum_d V_id (-K_ij (X_id - Y_jd) / sigma^2)
+        #     = -K_ij / sigma^2 * (sum_d V_id X_id - sum_d V_id Y_jd)
+        if Y is None:
+            Y = X
+        X, Y = _validate_kernel_inputs(X, Y)
+        V = np.asarray(V, dtype=float)
+        if V.shape != X.shape:
+            raise ValueError("V must have the same shape as X")
+        K = self.__call__(X, Y)
+        a = np.sum(V * X, axis=1)
+        cross = V @ Y.T
+        return -(K * (a[:, None] - cross)) / (self.sigma**2)
 
 
 class WeightedGaussianKernel(Kernel):
@@ -158,6 +195,26 @@ class WeightedGaussianKernel(Kernel):
         else:
             weighted_diff = diff * weights[None, None, :]
         return -(K[:, :, None] * weighted_diff) / (self.sigma**2)
+
+    def grad_x_dot(
+        self, X: np.ndarray, Y: np.ndarray | None, V: np.ndarray
+    ) -> np.ndarray:
+        # Closed form of sum_d V[i,d] * grad_x[i,j,d] with the diagonal metric
+        # weights, without allocating the (n_X, n_Y, dim) tensor. Folding the
+        # weights into V once gives the same expression as the plain Gaussian:
+        #   sum_d (w_d V_id)(X_id - Y_jd) = (VW·X)_i - (VW @ Y^T)_ij
+        if Y is None:
+            Y = X
+        X, Y = _validate_kernel_inputs(X, Y)
+        V = np.asarray(V, dtype=float)
+        if V.shape != X.shape:
+            raise ValueError("V must have the same shape as X")
+        weights = self._weights_for_dim(X.shape[1])
+        K = self.__call__(X, Y)
+        VW = V if weights is None else V * weights[None, :]
+        a = np.sum(VW * X, axis=1)
+        cross = VW @ Y.T
+        return -(K * (a[:, None] - cross)) / (self.sigma**2)
 
 
 class PolynomialKernel(Kernel):

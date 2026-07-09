@@ -44,6 +44,26 @@ def test_weighted_gaussian_grad_x_matches_finite_difference():
 
 
 @pytest.mark.parametrize(
+    "kernel",
+    [
+        GaussianKernel(sigma=1.3),
+        WeightedGaussianKernel(sigma=1.3),
+        WeightedGaussianKernel(sigma=1.3, weights=np.array([0.2, 1.5, 0.4])),
+    ],
+)
+def test_grad_x_dot_matches_dense_contraction(kernel):
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(6, 3))
+    Y = rng.normal(size=(4, 3))
+    V = rng.normal(size=(6, 3))
+
+    dense = np.einsum("ijd,id->ij", kernel.grad_x(X, Y), V)
+    fast = kernel.grad_x_dot(X, Y, V)
+
+    np.testing.assert_allclose(fast, dense, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize(
     "weights, match",
     [
         (np.array([[1.0, 2.0]]), "1D"),
