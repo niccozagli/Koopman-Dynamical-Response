@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.22.0"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -545,7 +545,7 @@ def _(mo):
 @app.cell
 def _(TSVDRegularizer, kdmd):
     tsvd_kdmd = TSVDRegularizer()
-    _ = tsvd_kdmd.factorize(kdmd.G, method="eigh")
+    _ = tsvd_kdmd.factorize(kdmd.G, method="eigsh", rel_threshold=5e-11)
     return (tsvd_kdmd,)
 
 
@@ -572,16 +572,28 @@ def _(mo):
 
 @app.cell
 def _(kdmd, tsvd_kdmd):
-    K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(
-        kdmd.A,
-        rel_threshold=5e-11
-        )
+    K_r_kdmd, U_r_kdmd, S_r_kdmd = tsvd_kdmd.solve_from_factorization(kdmd.A)
     return (K_r_kdmd,)
 
 
 @app.cell
-def _(K_r_kdmd, KoopmanSpectrumKDMD, dt_eff, eigs_ct, kdmd, plt):
-    spectrum_kdmd = KoopmanSpectrumKDMD.from_koopman_matrix(K_r_kdmd,kernel=kdmd.kernel)
+def _(
+    K_r_kdmd,
+    KoopmanSpectrumKDMD,
+    X_snap_kdmd,
+    dt_eff,
+    eigs_ct,
+    kdmd,
+    plt,
+    tsvd_kdmd,
+):
+    spectrum_kdmd = KoopmanSpectrumKDMD.from_koopman_matrix(
+        K_r_kdmd,
+        kernel=kdmd.kernel,
+        reference_data=X_snap_kdmd,
+        U_r=tsvd_kdmd.Ur,
+        S_r=tsvd_kdmd.Sr,
+    )
     eigs_ct_kdmd = spectrum_kdmd.continuous_time_eigenvalues(dt_eff)
     fig, ax = plt.subplots(figsize=(4, 4))
     ax.plot(eigs_ct_kdmd.real, eigs_ct_kdmd.imag, ".", ms=6)
@@ -678,28 +690,16 @@ def _(mo):
 
 
 @app.cell
-def _(
-    X_snap_kdmd,
-    kdmd,
-    np,
-    scalar_product_phi,
-    spectrum_kdmd,
-    standardised_data,
-    tsvd_kdmd,
-):
+def _(scalar_product_phi, spectrum_kdmd, standardised_data):
     data = standardised_data[::10]
     perturbation_kdmd = {1: data[:, 0]}
-    Delta = spectrum_kdmd.delta_from_trajectory(
+    Gamma, Delta = spectrum_kdmd.response_coefficients_from_trajectory(
         trajectories=data,
         X_values=perturbation_kdmd,
-        kernel=kdmd.kernel,
-        reference_data=X_snap_kdmd,
-        U_r=tsvd_kdmd.Ur,
-        S_r=tsvd_kdmd.Sr,
-        batch_size=5_000,
+        G_phi=scalar_product_phi,
+        batch_size=10_000,
+        return_delta=True,
     )
-
-    Gamma = np.linalg.inv(scalar_product_phi  ) @ Delta
     return (Gamma,)
 
 
@@ -731,6 +731,11 @@ def _(
     ax_resp_kdmd.set_xlabel(r"$t$",size=16)
     ax_resp_kdmd.set_ylabel(r"$G_z(t)$",size=16)
     plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 

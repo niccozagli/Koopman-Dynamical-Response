@@ -26,9 +26,11 @@ def _iter_trajectory_segments(trajectories: np.ndarray | Sequence[np.ndarray]):
 
 
 def _normalize_active_dims(
-    X_values: np.ndarray
-    | dict[int | str, np.ndarray | float | int | None]
-    | Sequence[np.ndarray | float | int | None],
+    X_values: (
+        np.ndarray
+        | dict[int | str, np.ndarray | float | int | None]
+        | Sequence[np.ndarray | float | int | None]
+    ),
     n_samples: int,
     dim: int,
 ) -> list[tuple[int, np.ndarray]]:
@@ -229,7 +231,7 @@ class KoopmanSpectrumEDMD:
 
         def _corr(k):
             if np.isscalar(k):
-                return row @ (coeff_f * (eigs ** k))
+                return row @ (coeff_f * (eigs**k))
             k_arr = np.asarray(k)
             pow_k = np.power(eigs, k_arr[:, None])
             return (pow_k * coeff_f[None, :]) @ row
@@ -331,9 +333,13 @@ class KoopmanSpectrumKDMD:
         if kernel_val is None:
             raise ValueError("kernel must be provided or stored on KoopmanSpectrumKDMD")
         if ref_val is None:
-            raise ValueError("reference_data must be provided or stored on KoopmanSpectrumKDMD")
+            raise ValueError(
+                "reference_data must be provided or stored on KoopmanSpectrumKDMD"
+            )
         if U_r_val is None or S_r_val is None:
-            raise ValueError("U_r and S_r must be provided or stored on KoopmanSpectrumKDMD")
+            raise ValueError(
+                "U_r and S_r must be provided or stored on KoopmanSpectrumKDMD"
+            )
         return kernel_val, np.asarray(ref_val), U_r_val, S_r_val
 
     def _resolve_reduction_params(
@@ -344,7 +350,9 @@ class KoopmanSpectrumKDMD:
         U_r_val = self.U_r if U_r is None else U_r
         S_r_val = self.S_r if S_r is None else S_r
         if U_r_val is None or S_r_val is None:
-            raise ValueError("U_r and S_r must be provided or stored on KoopmanSpectrumKDMD")
+            raise ValueError(
+                "U_r and S_r must be provided or stored on KoopmanSpectrumKDMD"
+            )
         return U_r_val, S_r_val
 
     def koopman_modes(
@@ -405,13 +413,170 @@ class KoopmanSpectrumKDMD:
             G_phi = G_phi / float(n_samples)
         return G_phi
 
+    @staticmethod
+    def _svd_pinv(
+        G: np.ndarray,
+        rel_threshold: float | None = None,
+        rank: int | None = None,
+    ) -> np.ndarray:
+        """
+        Compute a pseudoinverse with explicit SVD truncation.
+        """
+        if rel_threshold is not None and rank is not None:
+            raise ValueError("Specify either rel_threshold or rank, not both")
+        if rel_threshold is None and rank is None:
+            return np.linalg.pinv(G)
+
+        U, S, Vh = np.linalg.svd(G, full_matrices=False)
+        if S.size == 0:
+            raise ValueError("Cannot pseudoinvert an empty matrix")
+
+        if rank is not None:
+            r = int(rank)
+            if r < 1:
+                raise ValueError("rank must be >= 1")
+            if r > S.size:
+                raise ValueError("rank cannot exceed matrix dimension")
+            if np.any(S[:r] == 0.0):
+                raise ValueError("rank includes zero singular values")
+        else:
+            rel = float(rel_threshold)
+            if rel < 0.0:
+                raise ValueError("rel_threshold must be non-negative")
+            cutoff = rel * S[0]
+            r = int(np.sum(S > cutoff))
+            if r < 1:
+                raise ValueError("SVD truncation rank is < 1")
+
+        inv_s = np.zeros_like(S)
+        inv_s[:r] = 1.0 / S[:r]
+        return (Vh.conj().T * inv_s[None, :]) @ U.conj().T
+
+    def response_coefficients(
+        self,
+        Delta: np.ndarray,
+        G_phi: np.ndarray | None = None,
+        S_r: np.ndarray | None = None,
+        n_samples: int | None = None,
+        normalize: bool = True,
+        rel_threshold: float | None = None,
+        rank: int | None = None,
+        return_gram: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """
+        Solve for response-observable coefficients in Koopman eigenfunctions:
+
+            Gamma = G_phi^+ Delta
+
+        where Delta_k = <phi_k, Gamma>_0 and G_phi is the non-orthogonal
+        Koopman-eigenfunction Gram matrix.
+        """
+        delta = np.asarray(Delta)
+        squeeze = False
+        if delta.ndim == 1:
+            delta = delta[:, None]
+            squeeze = True
+        elif delta.ndim != 2:
+            raise ValueError("Delta must be a 1D or 2D array")
+
+        n_samples_val = n_samples
+        if G_phi is None and normalize and n_samples_val is None:
+            if self.reference_data is None:
+                raise ValueError(
+                    "n_samples must be provided when normalize=True and "
+                    "reference_data is not stored"
+                )
+            n_samples_val = self.reference_data.shape[0]
+
+        G_phi_val = (
+            self.eigenfunction_gram(
+                S_r=S_r,
+                n_samples=n_samples_val,
+                normalize=normalize,
+            )
+            if G_phi is None
+            else np.asarray(G_phi)
+        )
+        if G_phi_val.ndim != 2 or G_phi_val.shape[0] != G_phi_val.shape[1]:
+            raise ValueError("G_phi must be a square matrix")
+        if delta.shape[0] != G_phi_val.shape[0]:
+            raise ValueError("Delta length must match G_phi dimension")
+
+        coeffs = (
+            self._svd_pinv(G_phi_val, rel_threshold=rel_threshold, rank=rank) @ delta
+        )
+        if squeeze:
+            coeffs = coeffs[:, 0]
+        return (coeffs, G_phi_val) if return_gram else coeffs
+
+    def response_coefficients_from_trajectory(
+        self,
+        trajectories: np.ndarray | Sequence[np.ndarray],
+        X_values: (
+            np.ndarray
+            | dict[int | str, np.ndarray | float | int | None]
+            | Sequence[np.ndarray | float | int | None]
+            | Callable[[np.ndarray], np.ndarray]
+        ),
+        G_phi: np.ndarray | None = None,
+        kernel: Kernel | None = None,
+        reference_data: np.ndarray | None = None,
+        U_r: np.ndarray | None = None,
+        S_r: np.ndarray | None = None,
+        n_samples: int | None = None,
+        normalize: bool = True,
+        rel_threshold: float | None = None,
+        rank: int | None = None,
+        batch_size: int = 5_000,
+        show_progress: bool = True,
+        return_delta: bool = False,
+        return_gram: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, ...]:
+        """
+        Estimate Delta from trajectory data and solve Gamma = G_phi^+ Delta.
+
+        The kernel is treated as opaque; only kernel.grad_x is used by
+        delta_from_trajectory, so weighted or geometry-aware kernels are
+        supported when they implement a consistent grad_x method.
+        """
+        Delta = self.delta_from_trajectory(
+            trajectories=trajectories,
+            X_values=X_values,
+            kernel=kernel,
+            reference_data=reference_data,
+            U_r=U_r,
+            S_r=S_r,
+            batch_size=batch_size,
+            show_progress=show_progress,
+        )
+
+        coeffs, G_phi_val = self.response_coefficients(
+            Delta=Delta,
+            G_phi=G_phi,
+            S_r=S_r,
+            n_samples=n_samples,
+            normalize=normalize,
+            rel_threshold=rel_threshold,
+            rank=rank,
+            return_gram=True,
+        )
+
+        outputs: list[np.ndarray] = [coeffs]
+        if return_delta:
+            outputs.append(Delta)
+        if return_gram:
+            outputs.append(G_phi_val)
+        return tuple(outputs) if len(outputs) > 1 else coeffs
+
     def delta_from_trajectory(
         self,
         trajectories: np.ndarray | Sequence[np.ndarray],
-        X_values: np.ndarray
-        | dict[int | str, np.ndarray | float | int | None]
-        | Sequence[np.ndarray | float | int | None]
-        | Callable[[np.ndarray], np.ndarray],
+        X_values: (
+            np.ndarray
+            | dict[int | str, np.ndarray | float | int | None]
+            | Sequence[np.ndarray | float | int | None]
+            | Callable[[np.ndarray], np.ndarray]
+        ),
         kernel: Kernel | None = None,
         reference_data: np.ndarray | None = None,
         U_r: np.ndarray | None = None,
@@ -455,6 +620,7 @@ class KoopmanSpectrumKDMD:
 
         G = None
         n_total = 0
+        n_seen = 0
         segments = _iter_trajectory_segments(trajectories)
 
         for segment in segments:
@@ -462,6 +628,7 @@ class KoopmanSpectrumKDMD:
             if seg_arr.ndim != 2:
                 raise ValueError("each trajectory segment must be a 2D array")
             n_samples = seg_arr.shape[0]
+            n_seen += n_samples
 
             # Normalize X_values for this segment. If a callable is provided,
             # evaluate it on the segment to get per-sample values.
@@ -497,8 +664,16 @@ class KoopmanSpectrumKDMD:
                 G += inner.sum(axis=0)
                 n_total += inner.shape[0]
 
-        if G is None or n_total == 0:
+        if n_seen == 0:
             raise ValueError("no samples provided to estimate Delta_k")
+        if G is None or n_total == 0:
+            Delta = np.zeros(
+                self.right_eigvecs.shape[1], dtype=self.right_eigvecs.dtype
+            )
+            if return_b:
+                b = np.zeros(ref_arr.shape[0], dtype=self.right_eigvecs.dtype)
+                return Delta, b
+            return Delta
 
         # b_j = <X · ∇_x k(x, x_j)>_0
         b = G / float(n_total)
