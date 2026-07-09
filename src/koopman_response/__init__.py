@@ -7,7 +7,12 @@ from koopman_response.algorithms.dictionaries import (
 )
 from koopman_response.algorithms.edmd import EDMD
 from koopman_response.algorithms.kdmd import KernelDMD
-from koopman_response.algorithms.kernels import GaussianKernel, Kernel, PolynomialKernel
+from koopman_response.algorithms.kernels import (
+    GaussianKernel,
+    Kernel,
+    PolynomialKernel,
+    WeightedGaussianKernel,
+)
 from koopman_response.algorithms.regularization import TSVDRegularizer
 from koopman_response.algorithms.spectrum import (
     KoopmanSpectrumEDMD,
@@ -25,6 +30,7 @@ __all__ = [
     "EDMD",
     "Kernel",
     "GaussianKernel",
+    "WeightedGaussianKernel",
     "PolynomialKernel",
     "KernelDMD",
     "TSVDRegularizer",

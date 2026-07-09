@@ -5,6 +5,55 @@ from typing import Tuple
 import numpy as np
 
 
+def cosine_trapezoid_weights(
+    space_coord: np.ndarray,
+    n_features: int | None = None,
+) -> np.ndarray:
+    """
+    Build trapezoidal quadrature weights with cosine meridional weighting.
+
+    The input coordinates are normalized to [0, 1], then weighted by
+    cos(pi * x / 2). This matches the EBM latitude metric used for positive
+    meridional coordinates.
+    """
+    coord = np.asarray(space_coord, dtype=float)
+    if coord.ndim != 1:
+        raise ValueError("space_coord must be a 1D array")
+    if coord.size == 0:
+        raise ValueError("space_coord must not be empty")
+    if not np.all(np.isfinite(coord)):
+        raise ValueError("space_coord must be finite")
+    if n_features is not None:
+        n = int(n_features)
+        if n < 1:
+            raise ValueError("n_features must be >= 1")
+        if coord.size not in {1, n}:
+            raise ValueError("space_coord length must be 1 or match n_features")
+    else:
+        n = coord.size
+
+    x_min = coord.min()
+    x_max = coord.max()
+    if np.isclose(x_max, x_min):
+        x_grid = np.linspace(0.0, 1.0, n)
+    else:
+        if coord.size != n:
+            raise ValueError("non-degenerate space_coord must match n_features")
+        x_grid = (coord - x_min) / (x_max - x_min)
+
+    dx_weight = np.empty_like(x_grid)
+    if x_grid.size < 2:
+        dx_weight[...] = 1.0
+    else:
+        dx_weight[0] = 0.5 * (x_grid[1] - x_grid[0])
+        dx_weight[-1] = 0.5 * (x_grid[-1] - x_grid[-2])
+        if x_grid.size > 2:
+            dx_weight[1:-1] = 0.5 * (x_grid[2:] - x_grid[:-2])
+
+    cos_weight = np.cos(0.5 * np.pi * x_grid)
+    return np.clip(cos_weight * dx_weight, a_min=0.0, a_max=None)
+
+
 def minmax_scale(
     data: np.ndarray,
     feature_range: Tuple[float, float] = (-1.0, 1.0),
@@ -106,4 +155,4 @@ def make_snapshots(
     if lag >= n_samples:
         raise ValueError(f"lag={lag} is too large for data length {n_samples}")
     dt_eff = float(dt) * int(lag) * int(stride)
-    return data[: -lag], data[lag:], dt_eff
+    return data[:-lag], data[lag:], dt_eff
